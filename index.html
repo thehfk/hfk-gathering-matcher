@@ -1,0 +1,1649 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HFK 게더링</title>
+<style>
+  :root {
+    --hfk-red: #980000;
+    --hfk-red-dim: #b53a3a;
+    --bg: #fafaf7;
+    --card: #ffffff;
+    --border: #e5e3dd;
+    --text: #1a1a1a;
+    --muted: #6b6b66;
+    --ok: #2f7d3f;
+    --warn: #a86b00;
+    --err: #c0392b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+  }
+  header {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .logo { font-weight: 700; font-size: 20px; color: var(--hfk-red); }
+  .logo small { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 8px; }
+  .nav { display: flex; gap: 4px; }
+  .nav button {
+    background: none;
+    border: 1px solid var(--border);
+    padding: 8px 16px;
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 4px;
+    color: var(--muted);
+  }
+  .nav button.active {
+    background: var(--hfk-red);
+    color: white;
+    border-color: var(--hfk-red);
+  }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px; }
+  h2 { font-size: 22px; margin: 0 0 4px; }
+  h3 { font-size: 17px; margin: 0 0 12px; }
+  h4 { font-size: 15px; margin: 0 0 8px; color: var(--muted); font-weight: 500; }
+  .section-desc { color: var(--muted); font-size: 14px; margin: 0 0 16px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+  }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  @media (max-width: 700px) {
+    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+  }
+  .stat {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px;
+  }
+  .stat-label { color: var(--muted); font-size: 12px; }
+  .stat-value { font-size: 24px; font-weight: 600; margin-top: 4px; }
+  .btn {
+    background: var(--hfk-red);
+    color: white;
+    border: none;
+    padding: 10px 18px;
+    font-size: 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .btn:hover { background: #7a0000; }
+  .btn:disabled { background: #ccc; cursor: not-allowed; }
+  .btn-secondary { background: white; color: var(--text); border: 1px solid var(--border); }
+  .btn-secondary:hover { background: #f5f5f0; }
+  .btn-ghost { background: none; color: var(--muted); border: none; padding: 4px 8px; font-size: 13px; cursor: pointer; }
+  .btn-ghost:hover { color: var(--text); }
+  .btn-small { padding: 6px 12px; font-size: 13px; }
+  input, select, textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 14px;
+    font-family: inherit;
+    background: white;
+  }
+  textarea { min-height: 70px; resize: vertical; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; margin-top: 12px; }
+  label.inline { display: inline-flex; align-items: center; gap: 6px; margin: 0 12px 8px 0; cursor: pointer; }
+  label.inline input { width: auto; }
+  .form-row { margin-bottom: 12px; }
+  .radio-group {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .radio-card {
+    flex: 1;
+    min-width: 120px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    cursor: pointer;
+    text-align: center;
+    background: white;
+  }
+  .radio-card.selected {
+    border-color: var(--hfk-red);
+    background: #fdf5f5;
+  }
+  .radio-card input { display: none; }
+  .radio-card-title { font-weight: 500; font-size: 14px; }
+  .radio-card-desc { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .chip-group { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    cursor: pointer;
+    font-size: 13px;
+    background: white;
+    user-select: none;
+  }
+  .chip.selected {
+    background: var(--hfk-red);
+    color: white;
+    border-color: var(--hfk-red);
+  }
+  .tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    background: #eee;
+    color: #555;
+    margin-right: 4px;
+  }
+  .tag-seniority { background: #e8f0f7; color: #2c5876; }
+  .tag-job { background: #f0f0e8; color: #5c5c2c; }
+  .tag-topic { background: #f7e8ec; color: #762c40; }
+  .tag-ok { background: #e0f0e2; color: var(--ok); }
+  .tag-warn { background: #f7ecd6; color: var(--warn); }
+  .tag-err { background: #f7ded6; color: var(--err); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    padding: 10px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th { color: var(--muted); font-weight: 500; font-size: 13px; }
+  tr:hover { background: #fafaf5; }
+  .group-card {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px;
+    margin-bottom: 12px;
+    background: #fefefe;
+  }
+  .group-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .group-title strong { font-size: 15px; }
+  .member-list { display: flex; flex-direction: column; gap: 6px; }
+  .member-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 10px;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 14px;
+  }
+  .member-info { flex: 1; }
+  .member-name { font-weight: 500; }
+  .member-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .move-select { width: auto; padding: 4px 8px; font-size: 12px; }
+  .empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--muted);
+  }
+  .toolbar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .toolbar-spacer { flex: 1; }
+  .banner {
+    padding: 12px 16px;
+    border-radius: 4px;
+    margin-bottom: 16px;
+    font-size: 14px;
+  }
+  .banner-info { background: #eef2f7; color: #2c4a76; }
+  .banner-ok { background: #eaf5ec; color: var(--ok); }
+  .banner-warn { background: #f7f0e0; color: var(--warn); }
+  .modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .modal {
+    background: white;
+    border-radius: 8px;
+    max-width: 640px;
+    width: 92%;
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 24px;
+  }
+  .modal h3 { margin-top: 0; }
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 20px;
+  }
+  .hidden { display: none !important; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+  code { background: #f0f0eb; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">HFK 게더링 <small>· 그룹 매칭 시연</small></div>
+  <div class="nav">
+    <button id="nav-user" class="active" onclick="setView('user')">사용자</button>
+    <button id="nav-admin" onclick="setView('admin')">관리자</button>
+  </div>
+</header>
+
+<main>
+  <div id="view-user"></div>
+  <div id="view-admin" class="hidden"></div>
+</main>
+
+<div id="modal-root"></div>
+
+<script>
+// ===========================================================================
+// 도메인 상수 (요구서 4.6, 4.7 예시)
+// ===========================================================================
+const JOB_LIST = [
+  "경영기획","전략","사업기획","사업개발","마케팅","브랜드",
+  "영업","제품","서비스 기획","데이터","개발","디자인",
+  "인사","조직문화","재무","회계","운영","창업"
+];
+const JOB_GROUPS = [
+  ["경영기획","전략","사업기획","사업개발"],
+  ["마케팅","브랜드"],
+  ["제품","서비스 기획"],
+  ["데이터","개발"],
+  ["인사","조직문화"],
+  ["재무","회계"],
+  ["영업","운영"],
+];
+const TOPIC_LIST = [
+  "리더십","커리어 전환","팀 관리","조직문화","AI 활용","기획력",
+  "독립과 창업","사이드 프로젝트","투자와 자산","일과 삶",
+  "관계와 네트워크","브랜딩","마케팅","새로운 사업"
+];
+const TOPIC_CLUSTERS = [
+  ["리더십","팀 관리","조직문화"],
+  ["커리어 전환","독립과 창업","사이드 프로젝트"],
+  ["AI 활용","기획력","새로운 사업"],
+  ["브랜딩","마케팅"],
+];
+const SENIORITY_OPTIONS = [
+  {value: "similar", label: "나와 비슷한 연차"},
+  {value: "senior", label: "나보다 선배"},
+  {value: "junior", label: "나보다 후배"},
+  {value: "any", label: "상관 없음"},
+];
+
+// ===========================================================================
+// 상태 관리 (localStorage)
+// ===========================================================================
+const STORAGE_KEY = "hfk_gathering_state_v1";
+
+function defaultState() {
+  return {
+    session: {
+      id: "s1",
+      name: "2026 여름 HFK 게더링",
+      date: "2026-08-15",
+      time: "19:00-21:30",
+      location: "성수동 HFK 라운지",
+      intro: "비슷한 고민을 가진 멤버들과 5명 단위 소그룹으로 이야기 나누는 저녁 세션입니다.",
+      targetGroupSize: 5,
+      minGroupSize: 4,
+      maxGroupSize: 6,
+      applyDeadline: "2026-08-08",
+      confirmDate: "2026-08-11",
+    },
+    currentUserId: null,
+    users: [],
+    applications: [],
+    groups: null,
+    confirmed: false,
+    drive: {
+      webAppUrl: "",
+      enabled: false,
+      lastSyncAt: null,
+      lastSyncResult: null,
+    },
+  };
+}
+
+let state = loadState();
+let uiState = { editing: false };
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const s = JSON.parse(raw);
+      // 이전 버전 마이그레이션: drive 필드 없으면 추가
+      if (!s.drive) s.drive = defaultState().drive;
+      return s;
+    }
+  } catch(e) {}
+  return defaultState();
+}
+function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+function resetState() {
+  if (!confirm("모든 데이터를 초기화합니다. 계속하시겠습니까?")) return;
+  state = defaultState();
+  saveState();
+  render();
+}
+
+// ===========================================================================
+// Google Drive 연동 (Apps Script Web App)
+// ===========================================================================
+// text/plain 사용: 브라우저 preflight 방지 (Apps Script는 e.postData.contents로 받음)
+async function postToDrive(payload) {
+  const url = state.drive.webAppUrl;
+  if (!url) throw new Error("Web App URL이 설정되어 있지 않습니다.");
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify(payload),
+    redirect: "follow",
+  });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return await res.json();
+}
+
+function serializeApp(app) {
+  const user = state.users.find(u => u.id === app.userId);
+  return {
+    id: app.id,
+    name: user?.name || "(이름 없음)",
+    seniority: app.seniority,
+    currentJob: app.currentJob,
+    criterion: app.criterion,
+    desiredSeniority: app.desiredSeniority,
+    desiredJobs: app.desiredJobs,
+    topics: app.topics,
+    concern: app.concern,
+    experience: app.experience,
+    disclose: app.disclose,
+    createdAt: app.createdAt,
+  };
+}
+
+async function pushApplicationToDrive(app) {
+  if (!state.drive.enabled || !state.drive.webAppUrl) return;
+  try {
+    const result = await postToDrive({ type: "application", payload: serializeApp(app) });
+    console.log("Drive 저장:", result);
+  } catch (e) {
+    console.warn("Drive 저장 실패 (로컬은 정상 저장됨):", e);
+  }
+}
+
+async function testDriveConnection() {
+  const btn = document.getElementById("drive-test-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "테스트 중..."; }
+  try {
+    const result = await postToDrive({ type: "ping" });
+    alert("연결 성공: " + (result.message || "OK"));
+  } catch (e) {
+    alert("연결 실패: " + e.message + "\n\nURL이 정확한지, Apps Script가 '모든 사용자' 접근으로 배포됐는지 확인해주세요.");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "연결 테스트"; }
+  }
+}
+
+async function syncAllToDrive() {
+  const btn = document.getElementById("drive-sync-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "전송 중..."; }
+  try {
+    const result = await postToDrive({
+      type: "syncAll",
+      applications: state.applications.map(serializeApp),
+      session: state.session,
+    });
+    state.drive.lastSyncAt = new Date().toISOString();
+    state.drive.lastSyncResult = `신청 ${result.appCount || 0}건 전송 완료`;
+    saveState();
+    render();
+    alert(state.drive.lastSyncResult);
+  } catch (e) {
+    state.drive.lastSyncResult = "전송 실패: " + e.message;
+    saveState();
+    render();
+    alert("전송 실패: " + e.message);
+  }
+}
+
+async function pushSessionToDrive() {
+  if (!state.drive.enabled || !state.drive.webAppUrl) return;
+  try {
+    await postToDrive({ type: "session", payload: state.session });
+  } catch (e) {
+    console.warn("세션 정보 Drive 저장 실패:", e);
+  }
+}
+
+function updateDriveConfig() {
+  const url = document.getElementById("drive-url").value.trim();
+  const enabled = document.getElementById("drive-enabled").checked;
+  state.drive.webAppUrl = url;
+  state.drive.enabled = enabled;
+  saveState();
+  render();
+}
+
+// ===========================================================================
+// 매칭 알고리즘 (matcher.py 포팅)
+// ===========================================================================
+function seniorityRange(app) {
+  const y = app.seniority;
+  switch (app.desiredSeniority) {
+    case "similar": return [Math.max(0, y-2), y+2];
+    case "senior": return [y+1, 99];
+    case "junior": return [0, Math.max(0, y-1)];
+    default: return null;
+  }
+}
+
+function scorePair(a, b) {
+  if (a.userIdForDate !== b.userIdForDate) {}  // 단일 세션 데모라 날짜 체크는 세션 ID로 대체
+  let total = 0;
+
+  // 1. 기준 일치 (30)
+  if (a.criterion === b.criterion) total += 30;
+
+  // 2. 세부 선호 (30)
+  total += subPreferenceScore(a, b);
+
+  // 3. 연차 유사도 (15)
+  const diff = Math.abs(a.seniority - b.seniority);
+  if (diff === 0) total += 15;
+  else if (diff <= 2) total += 12;
+  else if (diff <= 4) total += 8;
+  else if (diff <= 6) total += 4;
+
+  // 4. 직무 연관성 (15)
+  total += jobRelationScore(a.currentJob, b.currentJob);
+
+  // 5. 주제 유사도 (20)
+  total += topicSimilarityScore(a.topics || [], b.topics || []);
+
+  // 6. 고민-경험 (10)
+  total += concernExperienceScore(a, b);
+
+  return Math.min(100, total);
+}
+
+function subPreferenceScore(a, b) {
+  if (a.criterion === "seniority" && b.criterion === "seniority") {
+    const ar = seniorityRange(a), br = seniorityRange(b);
+    const aWantsB = ar && b.seniority >= ar[0] && b.seniority <= ar[1];
+    const bWantsA = br && a.seniority >= br[0] && a.seniority <= br[1];
+    return (aWantsB && bWantsA) ? 30 : (aWantsB || bWantsA) ? 15 : 0;
+  }
+  if (a.criterion === "job" && b.criterion === "job") {
+    const aWantsB = (a.desiredJobs || []).includes(b.currentJob);
+    const bWantsA = (b.desiredJobs || []).includes(a.currentJob);
+    return (aWantsB && bWantsA) ? 30 : (aWantsB || bWantsA) ? 15 : 0;
+  }
+  if (a.criterion === "topic" && b.criterion === "topic") {
+    const shared = (a.topics||[]).filter(t => (b.topics||[]).includes(t));
+    if (shared.length >= 2) return 30;
+    if (shared.length === 1) return 20;
+    for (const cluster of TOPIC_CLUSTERS) {
+      const aHit = (a.topics||[]).some(t => cluster.includes(t));
+      const bHit = (b.topics||[]).some(t => cluster.includes(t));
+      if (aHit && bHit) return 10;
+    }
+    return 0;
+  }
+  return 0;
+}
+
+function jobRelationScore(ja, jb) {
+  if (ja === jb) return 15;
+  for (const g of JOB_GROUPS) {
+    if (g.includes(ja) && g.includes(jb)) return 10;
+  }
+  return 0;
+}
+
+function topicSimilarityScore(ta, tb) {
+  const shared = ta.filter(t => tb.includes(t)).length;
+  if (shared >= 3) return 20;
+  if (shared === 2) return 14;
+  if (shared === 1) return 8;
+  for (const cluster of TOPIC_CLUSTERS) {
+    if (ta.some(t => cluster.includes(t)) && tb.some(t => cluster.includes(t))) return 4;
+  }
+  return 0;
+}
+
+function tokenize(text) {
+  if (!text) return new Set();
+  const tokens = text.replace(/[.,]/g, " ").split(/\s+/).filter(t => t.length >= 2);
+  return new Set(tokens);
+}
+
+function concernExperienceScore(a, b) {
+  let score = 0;
+  const pairs = [
+    [tokenize(a.concern), tokenize(b.experience)],
+    [tokenize(b.concern), tokenize(a.experience)],
+  ];
+  for (const [c, e] of pairs) {
+    if (!c.size) continue;
+    let overlap = 0;
+    c.forEach(t => { if (e.has(t)) overlap++; });
+    if (overlap >= 2) score += 5;
+    else if (overlap === 1) score += 3;
+  }
+  return Math.min(10, score);
+}
+
+function buildScoreCache(apps) {
+  const cache = {};
+  for (let i=0; i<apps.length; i++) {
+    for (let j=i+1; j<apps.length; j++) {
+      const key = pairKey(apps[i].id, apps[j].id);
+      cache[key] = scorePair(apps[i], apps[j]);
+    }
+  }
+  return cache;
+}
+function pairKey(a, b) { return a < b ? a+"|"+b : b+"|"+a; }
+
+function avgScoreToGroup(cand, group, cache) {
+  if (!group.length) return 0;
+  let sum = 0;
+  for (const m of group) sum += cache[pairKey(cand.id, m.id)] || 0;
+  return sum / group.length;
+}
+
+function formGroups(pool, session, origin, counter, cache) {
+  const remaining = [...pool];
+  const groups = [];
+  while (remaining.length >= session.minGroupSize) {
+    // 시드: 나머지와 평균 점수 최고
+    let seed = remaining[0], seedScore = -1;
+    for (const p of remaining) {
+      let s = 0, n = 0;
+      for (const q of remaining) if (q.id !== p.id) { s += cache[pairKey(p.id,q.id)]||0; n++; }
+      const avg = n ? s/n : 0;
+      if (avg > seedScore) { seedScore = avg; seed = p; }
+    }
+    const group = [seed];
+    remaining.splice(remaining.indexOf(seed), 1);
+
+    while (group.length < session.targetGroupSize && remaining.length) {
+      let best = remaining[0], bestScore = -1;
+      for (const p of remaining) {
+        const avg = avgScoreToGroup(p, group, cache);
+        if (avg > bestScore) { bestScore = avg; best = p; }
+      }
+      group.push(best);
+      remaining.splice(remaining.indexOf(best), 1);
+    }
+
+    groups.push({
+      id: "G" + String(counter.value++).padStart(3, "0"),
+      origin,
+      memberIds: group.map(g => g.id),
+    });
+  }
+  return { groups, leftover: remaining };
+}
+
+function assignSession(applications, session) {
+  const cache = buildScoreCache(applications);
+  const counter = { value: 1 };
+  const allGroups = [];
+  const leftover = [];
+
+  for (const criterion of ["seniority", "job", "topic"]) {
+    const pool = applications.filter(a => a.criterion === criterion);
+    if (!pool.length) continue;
+    const { groups, leftover: rem } = formGroups(pool, session, "criterion:" + criterion, counter, cache);
+    allGroups.push(...groups);
+    leftover.push(...rem);
+  }
+
+  // 2단계: 잔여 인원 통합
+  let finalUnassigned = leftover;
+  if (leftover.length >= session.minGroupSize) {
+    const { groups, leftover: rem2 } = formGroups(leftover, session, "mixed", counter, cache);
+    allGroups.push(...groups);
+    finalUnassigned = rem2;
+  }
+
+  // 3단계: 남은 인원 기존 그룹에 편입 (max 이내)
+  const stillUnassigned = [];
+  for (const p of finalUnassigned) {
+    const sortedGroups = [...allGroups].sort((g1, g2) => {
+      const m1 = g1.memberIds.map(id => applications.find(a => a.id === id));
+      const m2 = g2.memberIds.map(id => applications.find(a => a.id === id));
+      return avgScoreToGroup(p, m2, cache) - avgScoreToGroup(p, m1, cache);
+    });
+    let placed = false;
+    for (const g of sortedGroups) {
+      if (g.memberIds.length < session.maxGroupSize) {
+        g.memberIds.push(p.id);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) stillUnassigned.push(p);
+  }
+
+  return { groups: allGroups, unassigned: stillUnassigned.map(p => p.id), cache };
+}
+
+function groupMetrics(group, cache) {
+  const ids = group.memberIds;
+  if (ids.length < 2) return { avg: 0, min: 0 };
+  const scores = [];
+  for (let i=0; i<ids.length; i++) {
+    for (let j=i+1; j<ids.length; j++) {
+      scores.push(cache[pairKey(ids[i], ids[j])] || 0);
+    }
+  }
+  return {
+    avg: scores.reduce((a,b) => a+b, 0) / scores.length,
+    min: Math.min(...scores),
+  };
+}
+
+// ===========================================================================
+// 렌더링 — 사용자 뷰
+// ===========================================================================
+function renderUserView() {
+  const root = document.getElementById("view-user");
+  const s = state.session;
+  const currentUser = state.users.find(u => u.id === state.currentUserId);
+  const myApp = currentUser ? state.applications.find(a => a.userId === currentUser.id) : null;
+
+  let html = `
+    <div class="card">
+      <label>테스트 사용자 (데모용 로그인 시뮬레이션)</label>
+      <div style="display:flex; gap:8px; align-items:flex-end;">
+        <select id="user-select" onchange="switchUser(this.value)" style="flex:1;">
+          <option value="">— 사용자 선택 —</option>
+          ${state.users.map(u => `
+            <option value="${u.id}" ${u.id === state.currentUserId ? "selected":""}>
+              ${u.name}${state.applications.find(a => a.userId === u.id) ? " (신청함)" : ""}
+            </option>
+          `).join("")}
+        </select>
+        <button class="btn btn-secondary btn-small" onclick="openNewUserModal()">+ 새 사용자</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <h2>${s.name}</h2>
+          <p class="section-desc">${s.intro}</p>
+        </div>
+      </div>
+      <div class="grid-4">
+        <div><h4>날짜</h4>${s.date}</div>
+        <div><h4>시간</h4>${s.time}</div>
+        <div><h4>장소</h4>${s.location}</div>
+        <div><h4>그룹 크기</h4>${s.targetGroupSize}명 (${s.minGroupSize}~${s.maxGroupSize})</div>
+      </div>
+      <hr>
+      <div class="grid-3">
+        <div><h4>신청 마감</h4>${s.applyDeadline}</div>
+        <div><h4>그룹 확정 예정</h4>${s.confirmDate}</div>
+        <div><h4>상태</h4>
+          ${state.confirmed
+            ? '<span class="tag tag-ok">그룹 확정 · 결과 공개</span>'
+            : state.groups
+              ? '<span class="tag tag-warn">그룹 배정 중</span>'
+              : '<span class="tag tag-ok">신청 접수 중</span>'}
+        </div>
+      </div>
+    </div>
+  `;
+
+  if (!currentUser) {
+    html += `<div class="empty">먼저 상단에서 사용자를 선택하거나 새로 만들어주세요.</div>`;
+    root.innerHTML = html;
+    return;
+  }
+
+  if (!myApp) {
+    html += renderApplicationForm(null);
+  } else if (uiState.editing) {
+    html += renderApplicationForm(myApp);
+  } else {
+    html += renderMyApplication(myApp);
+    if (state.confirmed && state.groups) {
+      html += renderMyGroup(myApp);
+    }
+  }
+
+  root.innerHTML = html;
+  attachFormHandlers();
+}
+
+function renderApplicationForm(existing) {
+  const editing = !!existing;
+  return `
+    <div class="card">
+      <h3>${editing ? "신청 수정" : "게더링 신청"}</h3>
+      <p class="section-desc">아래 정보를 입력해 게더링에 참가 신청하세요.</p>
+
+      <div class="form-row">
+        <label>현재 총 경력 연차</label>
+        <input type="number" id="f-seniority" min="0" max="40"
+          value="${existing?.seniority ?? ""}" placeholder="예: 7">
+      </div>
+
+      <div class="form-row">
+        <label>현재 직무</label>
+        <select id="f-currentJob">
+          <option value="">— 선택 —</option>
+          ${JOB_LIST.map(j => `<option ${existing?.currentJob === j ? "selected" : ""}>${j}</option>`).join("")}
+        </select>
+      </div>
+
+      <div class="form-row">
+        <label>만나고 싶은 사람의 기준</label>
+        <div class="radio-group">
+          ${[
+            {v:"seniority", t:"연차", d:"비슷하거나 다른 연차와"},
+            {v:"job", t:"직무", d:"관심 있는 직무와"},
+            {v:"topic", t:"주제", d:"같은 고민 · 관심사와"},
+          ].map(o => `
+            <label class="radio-card ${existing?.criterion === o.v ? "selected":""}" data-criterion="${o.v}">
+              <input type="radio" name="f-criterion" value="${o.v}" ${existing?.criterion === o.v ? "checked":""}>
+              <div class="radio-card-title">${o.t}</div>
+              <div class="radio-card-desc">${o.d}</div>
+            </label>
+          `).join("")}
+        </div>
+      </div>
+
+      <div id="criterion-fields"></div>
+
+      <div class="form-row">
+        <label>현재 고민 · 이야기 나누고 싶은 것</label>
+        <textarea id="f-concern" placeholder="예: 팀장으로서 성과 관리와 평가가 어렵다">${existing?.concern || ""}</textarea>
+      </div>
+
+      <div class="form-row">
+        <label>공유할 수 있는 경험</label>
+        <textarea id="f-experience" placeholder="예: 스타트업 초기 팀 세팅 경험">${existing?.experience || ""}</textarea>
+      </div>
+
+      <div class="form-row">
+        <label>공개 정보 (본 그룹 참가자에게)</label>
+        <div>
+          ${["회사","직무","연차","고민","관심 주제"].map(k => `
+            <label class="inline">
+              <input type="checkbox" class="f-disclose" value="${k}"
+                ${(existing?.disclose ?? ["회사","직무","연차","고민","관심 주제"]).includes(k) ? "checked":""}>
+              ${k}
+            </label>
+          `).join("")}
+          <div style="font-size:12px; color:var(--muted); margin-top:6px;">
+            연락처는 기본적으로 비공개입니다.
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top: 20px; display:flex; gap:8px;">
+        <button class="btn" onclick="submitApplication(${editing})">
+          ${editing ? "수정 저장" : "신청 제출"}
+        </button>
+        ${editing ? `<button class="btn btn-secondary" onclick="cancelApplication()">신청 취소</button>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+function renderCriterionFields(criterion, existing) {
+  if (criterion === "seniority") {
+    return `
+      <div class="form-row">
+        <label>만나고 싶은 연차</label>
+        <div class="radio-group">
+          ${SENIORITY_OPTIONS.map(o => `
+            <label class="radio-card ${existing?.desiredSeniority === o.value ? "selected":""}" data-desired="${o.value}">
+              <input type="radio" name="f-desiredSeniority" value="${o.value}" ${existing?.desiredSeniority === o.value ? "checked":""}>
+              <div class="radio-card-title">${o.label}</div>
+            </label>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  }
+  if (criterion === "job") {
+    return `
+      <div class="form-row">
+        <label>만나고 싶은 직무 (여러 개 선택 가능)</label>
+        <div class="chip-group">
+          ${JOB_LIST.map(j => `
+            <div class="chip ${(existing?.desiredJobs || []).includes(j) ? "selected":""}"
+                 data-job="${j}" onclick="toggleChip(this, 'job')">${j}</div>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  }
+  if (criterion === "topic") {
+    return `
+      <div class="form-row">
+        <label>관심 주제 (최대 3개)</label>
+        <div class="chip-group">
+          ${TOPIC_LIST.map(t => `
+            <div class="chip ${(existing?.topics || []).includes(t) ? "selected":""}"
+                 data-topic="${t}" onclick="toggleChip(this, 'topic')">${t}</div>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  }
+  return "";
+}
+
+function attachFormHandlers() {
+  document.querySelectorAll(".radio-card[data-criterion]").forEach(el => {
+    el.addEventListener("click", () => {
+      document.querySelectorAll(".radio-card[data-criterion]").forEach(c => c.classList.remove("selected"));
+      el.classList.add("selected");
+      const criterion = el.dataset.criterion;
+      el.querySelector("input").checked = true;
+      // 기존 응용 필드 재렌더
+      const existing = getFormSnapshot();
+      document.getElementById("criterion-fields").innerHTML = renderCriterionFields(criterion, existing);
+      attachSubHandlers();
+    });
+  });
+  // 초기: 이미 선택된 것 있으면
+  const checked = document.querySelector("input[name='f-criterion']:checked");
+  if (checked) {
+    const existing = getFormSnapshot();
+    document.getElementById("criterion-fields").innerHTML = renderCriterionFields(checked.value, existing);
+    attachSubHandlers();
+  }
+}
+
+function attachSubHandlers() {
+  document.querySelectorAll(".radio-card[data-desired]").forEach(el => {
+    el.addEventListener("click", () => {
+      document.querySelectorAll(".radio-card[data-desired]").forEach(c => c.classList.remove("selected"));
+      el.classList.add("selected");
+      el.querySelector("input").checked = true;
+    });
+  });
+}
+
+function toggleChip(el, type) {
+  if (type === "topic") {
+    const selectedCount = document.querySelectorAll('.chip.selected[data-topic]').length;
+    if (!el.classList.contains("selected") && selectedCount >= 3) {
+      alert("최대 3개까지 선택할 수 있어요.");
+      return;
+    }
+  }
+  el.classList.toggle("selected");
+}
+
+function getFormSnapshot() {
+  // 폼 현재 값을 existing 형태로 (재렌더용)
+  const criterion = document.querySelector("input[name='f-criterion']:checked")?.value;
+  return {
+    criterion,
+    desiredSeniority: document.querySelector("input[name='f-desiredSeniority']:checked")?.value,
+    desiredJobs: [...document.querySelectorAll('.chip.selected[data-job]')].map(c => c.dataset.job),
+    topics: [...document.querySelectorAll('.chip.selected[data-topic]')].map(c => c.dataset.topic),
+  };
+}
+
+function submitApplication(editing) {
+  const user = state.users.find(u => u.id === state.currentUserId);
+  if (!user) return alert("사용자를 먼저 선택해주세요.");
+
+  const seniority = parseInt(document.getElementById("f-seniority").value);
+  const currentJob = document.getElementById("f-currentJob").value;
+  const criterion = document.querySelector("input[name='f-criterion']:checked")?.value;
+  const concern = document.getElementById("f-concern").value.trim();
+  const experience = document.getElementById("f-experience").value.trim();
+  const disclose = [...document.querySelectorAll(".f-disclose:checked")].map(c => c.value);
+
+  if (isNaN(seniority) || seniority < 0) return alert("연차를 정확히 입력해주세요.");
+  if (!currentJob) return alert("현재 직무를 선택해주세요.");
+  if (!criterion) return alert("매칭 기준을 선택해주세요.");
+
+  const app = {
+    id: editing ? state.applications.find(a => a.userId === user.id).id : "a" + Date.now(),
+    userId: user.id,
+    seniority, currentJob, criterion,
+    desiredSeniority: document.querySelector("input[name='f-desiredSeniority']:checked")?.value || null,
+    desiredJobs: [...document.querySelectorAll('.chip.selected[data-job]')].map(c => c.dataset.job),
+    topics: [...document.querySelectorAll('.chip.selected[data-topic]')].map(c => c.dataset.topic),
+    concern, experience, disclose,
+    createdAt: editing ? state.applications.find(a => a.userId === user.id).createdAt : new Date().toISOString(),
+  };
+
+  if (criterion === "seniority" && !app.desiredSeniority) return alert("만나고 싶은 연차를 선택해주세요.");
+  if (criterion === "job" && !app.desiredJobs.length) return alert("만나고 싶은 직무를 1개 이상 선택해주세요.");
+  if (criterion === "topic" && !app.topics.length) return alert("관심 주제를 1개 이상 선택해주세요.");
+
+  if (editing) {
+    const idx = state.applications.findIndex(a => a.userId === user.id);
+    state.applications[idx] = app;
+  } else {
+    state.applications.push(app);
+  }
+  // 신청이 바뀌면 기존 배정은 초기화
+  state.groups = null;
+  state.confirmed = false;
+  uiState.editing = false;
+  saveState();
+  render();
+  pushApplicationToDrive(app);
+}
+
+function cancelApplication() {
+  if (!confirm("신청을 취소하시겠습니까?")) return;
+  const user = state.users.find(u => u.id === state.currentUserId);
+  state.applications = state.applications.filter(a => a.userId !== user.id);
+  state.groups = null;
+  state.confirmed = false;
+  saveState();
+  render();
+}
+
+function renderMyApplication(app) {
+  const criterionLabel = {seniority:"연차", job:"직무", topic:"주제"}[app.criterion];
+  let detail = "";
+  if (app.criterion === "seniority") {
+    detail = `<div><h4>희망 연차</h4>${SENIORITY_OPTIONS.find(o => o.value === app.desiredSeniority)?.label || "-"}</div>`;
+  } else if (app.criterion === "job") {
+    detail = `<div><h4>만나고 싶은 직무</h4>${app.desiredJobs.join(", ")}</div>`;
+  } else {
+    detail = `<div><h4>관심 주제</h4>${app.topics.join(", ")}</div>`;
+  }
+  const status = state.confirmed ? "그룹 확정" : state.groups ? "임시 배정" : "신청 완료 · 배정 대기";
+  const statusTag = state.confirmed ? "tag-ok" : state.groups ? "tag-warn" : "tag-ok";
+
+  return `
+    <div class="card">
+      <div class="card-header">
+        <h3>내 신청 내역</h3>
+        <span class="tag ${statusTag}">${status}</span>
+      </div>
+      <div class="grid-3">
+        <div><h4>연차</h4>${app.seniority}년</div>
+        <div><h4>현재 직무</h4>${app.currentJob}</div>
+        <div><h4>매칭 기준</h4>${criterionLabel}</div>
+        ${detail}
+        <div style="grid-column: span 2;"><h4>고민</h4>${app.concern || "-"}</div>
+        <div style="grid-column: span 3;"><h4>공유할 경험</h4>${app.experience || "-"}</div>
+        <div style="grid-column: span 3;"><h4>공개 정보</h4>${app.disclose.map(d => `<span class="tag">${d}</span>`).join("")}</div>
+      </div>
+      ${!state.confirmed ? `
+        <hr>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-secondary btn-small" onclick="editApplication()">신청 수정</button>
+          <button class="btn btn-secondary btn-small" onclick="cancelApplication()">신청 취소</button>
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function editApplication() {
+  uiState.editing = true;
+  render();
+  window.scrollTo(0, document.body.scrollHeight);
+}
+
+function renderMyGroup(app) {
+  if (!state.groups) return "";
+  const myGroup = state.groups.find(g => g.memberIds.includes(app.id));
+  if (!myGroup) {
+    return `
+      <div class="card">
+        <h3>내 그룹</h3>
+        <div class="banner banner-warn">
+          이번에는 그룹에 배정되지 못했습니다. 운영자가 별도로 안내드립니다.
+        </div>
+      </div>
+    `;
+  }
+  const s = state.session;
+  const members = myGroup.memberIds.map(id => {
+    const memApp = state.applications.find(a => a.id === id);
+    const memUser = state.users.find(u => u.id === memApp.userId);
+    return { app: memApp, user: memUser };
+  });
+
+  return `
+    <div class="card">
+      <h3>내 그룹 · ${myGroup.id}</h3>
+      <p class="section-desc">${s.date} · ${s.time} · ${s.location}</p>
+      <div class="member-list">
+        ${members.map(({app: ma, user: mu}) => {
+          const isMe = ma.userId === app.userId;
+          const showCompany = ma.disclose.includes("회사");
+          const showJob = ma.disclose.includes("직무");
+          const showSeniority = ma.disclose.includes("연차");
+          const showConcern = ma.disclose.includes("고민");
+          const showTopics = ma.disclose.includes("관심 주제");
+          return `
+            <div class="member-row" style="${isMe ? "background:#fdf5f5;" : ""}">
+              <div class="member-info">
+                <div class="member-name">${mu.name}${isMe ? " (나)" : ""}</div>
+                <div class="member-meta">
+                  ${[
+                    showSeniority ? ma.seniority + "년" : null,
+                    showJob ? ma.currentJob : null,
+                    showTopics && ma.topics.length ? "주제: " + ma.topics.join(", ") : null,
+                    showConcern && ma.concern ? "고민: " + ma.concern : null,
+                  ].filter(Boolean).join(" · ") || "정보 비공개"}
+                </div>
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function switchUser(id) {
+  state.currentUserId = id || null;
+  saveState();
+  render();
+}
+
+// ===========================================================================
+// 렌더링 — 관리자 뷰
+// ===========================================================================
+function renderAdminView() {
+  const root = document.getElementById("view-admin");
+  const s = state.session;
+  const apps = state.applications;
+  const byCriterion = {
+    seniority: apps.filter(a => a.criterion === "seniority").length,
+    job: apps.filter(a => a.criterion === "job").length,
+    topic: apps.filter(a => a.criterion === "topic").length,
+  };
+  const assignedCount = state.groups ? state.groups.reduce((s, g) => s + g.memberIds.length, 0) : 0;
+  const unassignedCount = apps.length - assignedCount;
+
+  let html = `
+    <div class="toolbar">
+      <button class="btn btn-secondary btn-small" onclick="loadSampleData()">샘플 신청자 18명 로드</button>
+      <button class="btn btn-secondary btn-small" onclick="resetState()">전체 초기화</button>
+      <div class="toolbar-spacer"></div>
+      <span style="font-size:13px; color:var(--muted);">세션: ${s.name}</span>
+    </div>
+
+    ${renderSessionEditor()}
+    ${renderDriveConfig()}
+
+    <div class="grid-4">
+      <div class="stat"><div class="stat-label">전체 신청자</div><div class="stat-value">${apps.length}</div></div>
+      <div class="stat"><div class="stat-label">배정 완료</div><div class="stat-value">${state.groups ? assignedCount : "-"}</div></div>
+      <div class="stat"><div class="stat-label">미배정</div><div class="stat-value">${state.groups ? unassignedCount : "-"}</div></div>
+      <div class="stat"><div class="stat-label">그룹 수</div><div class="stat-value">${state.groups ? state.groups.length : "-"}</div></div>
+    </div>
+
+    <div class="card" style="margin-top: 16px;">
+      <div class="card-header">
+        <h3>자동 그룹 배정</h3>
+        ${state.confirmed
+          ? '<span class="tag tag-ok">확정됨</span>'
+          : state.groups ? '<span class="tag tag-warn">임시 배정</span>' : ""}
+      </div>
+      <div style="font-size:13px; color:var(--muted); margin-bottom:12px;">
+        기준별 신청자: 연차 ${byCriterion.seniority} · 직무 ${byCriterion.job} · 주제 ${byCriterion.topic}
+        &nbsp; | &nbsp;
+        목표 그룹 인원 ${s.targetGroupSize}명 (${s.minGroupSize}~${s.maxGroupSize})
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn" onclick="runAssignment()" ${apps.length < s.minGroupSize ? "disabled" : ""}>
+          ${state.groups ? "재배정" : "자동 배정 실행"}
+        </button>
+        ${state.groups && !state.confirmed ? `
+          <button class="btn" onclick="confirmGroups()" style="background: var(--ok);">그룹 확정 · 결과 공개</button>
+        ` : ""}
+        ${state.confirmed ? `
+          <button class="btn btn-secondary" onclick="unconfirmGroups()">확정 해제</button>
+        ` : ""}
+      </div>
+    </div>
+  `;
+
+  if (state.groups) html += renderGroupsPanel();
+  html += renderApplicantsTable();
+
+  root.innerHTML = html;
+}
+
+function renderSessionEditor() {
+  const s = state.session;
+  const isOpen = uiState.editingSession;
+  return `
+    <div class="card">
+      <div class="card-header">
+        <h3>게더링 정보</h3>
+        <button class="btn btn-secondary btn-small" onclick="toggleSessionEdit()">
+          ${isOpen ? "접기" : "편집"}
+        </button>
+      </div>
+      ${isOpen ? `
+        <div class="grid-2">
+          <div>
+            <label>게더링명</label>
+            <input id="s-name" value="${escapeAttr(s.name)}">
+          </div>
+          <div>
+            <label>날짜</label>
+            <input id="s-date" type="date" value="${s.date}">
+          </div>
+          <div>
+            <label>시간</label>
+            <input id="s-time" value="${escapeAttr(s.time)}" placeholder="예: 19:00-21:30">
+          </div>
+          <div>
+            <label>장소</label>
+            <input id="s-location" value="${escapeAttr(s.location)}">
+          </div>
+          <div style="grid-column: span 2;">
+            <label>소개</label>
+            <textarea id="s-intro">${escapeHtml(s.intro)}</textarea>
+          </div>
+          <div>
+            <label>그룹 목표 인원</label>
+            <input id="s-target" type="number" min="2" max="20" value="${s.targetGroupSize}">
+          </div>
+          <div>
+            <label>그룹 최소 인원</label>
+            <input id="s-min" type="number" min="2" max="20" value="${s.minGroupSize}">
+          </div>
+          <div>
+            <label>그룹 최대 인원</label>
+            <input id="s-max" type="number" min="2" max="20" value="${s.maxGroupSize}">
+          </div>
+          <div></div>
+          <div>
+            <label>신청 마감일</label>
+            <input id="s-deadline" type="date" value="${s.applyDeadline}">
+          </div>
+          <div>
+            <label>그룹 확정 예정일</label>
+            <input id="s-confirm" type="date" value="${s.confirmDate}">
+          </div>
+        </div>
+        <div style="margin-top:16px; display:flex; gap:8px;">
+          <button class="btn" onclick="saveSession()">저장</button>
+          <button class="btn btn-secondary" onclick="toggleSessionEdit()">취소</button>
+        </div>
+      ` : `
+        <div class="grid-4">
+          <div><h4>날짜</h4>${s.date}</div>
+          <div><h4>시간</h4>${s.time}</div>
+          <div><h4>장소</h4>${s.location}</div>
+          <div><h4>그룹 크기</h4>${s.targetGroupSize}명 (${s.minGroupSize}~${s.maxGroupSize})</div>
+        </div>
+        <hr>
+        <div class="grid-3">
+          <div><h4>신청 마감</h4>${s.applyDeadline}</div>
+          <div><h4>확정 예정</h4>${s.confirmDate}</div>
+          <div><h4>소개</h4>${escapeHtml(s.intro)}</div>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function toggleSessionEdit() {
+  uiState.editingSession = !uiState.editingSession;
+  render();
+}
+
+function saveSession() {
+  const target = parseInt(document.getElementById("s-target").value);
+  const min = parseInt(document.getElementById("s-min").value);
+  const max = parseInt(document.getElementById("s-max").value);
+  if (min > target || target > max) {
+    return alert("그룹 크기 관계가 맞지 않습니다.\n최소 ≤ 목표 ≤ 최대 순으로 설정해주세요.");
+  }
+  state.session = {
+    ...state.session,
+    name: document.getElementById("s-name").value.trim() || state.session.name,
+    date: document.getElementById("s-date").value,
+    time: document.getElementById("s-time").value.trim(),
+    location: document.getElementById("s-location").value.trim(),
+    intro: document.getElementById("s-intro").value.trim(),
+    targetGroupSize: target,
+    minGroupSize: min,
+    maxGroupSize: max,
+    applyDeadline: document.getElementById("s-deadline").value,
+    confirmDate: document.getElementById("s-confirm").value,
+  };
+  uiState.editingSession = false;
+  saveState();
+  render();
+  pushSessionToDrive();
+}
+
+function renderDriveConfig() {
+  const d = state.drive;
+  const hasUrl = !!d.webAppUrl;
+  return `
+    <div class="card">
+      <div class="card-header">
+        <h3>Google Drive 연동</h3>
+        <span class="tag ${d.enabled && hasUrl ? "tag-ok" : ""}">${d.enabled && hasUrl ? "활성" : "비활성"}</span>
+      </div>
+      <p class="section-desc">
+        Apps Script Web App URL을 입력하면 신청 내용이 지정된 Google Sheet에 자동 저장됩니다.
+        설치법은 <code>apps-script.gs</code> 파일 상단 주석 참고.
+      </p>
+      <div class="form-row">
+        <label>Web App URL</label>
+        <input id="drive-url" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeAttr(d.webAppUrl)}">
+      </div>
+      <div class="form-row">
+        <label class="inline">
+          <input type="checkbox" id="drive-enabled" ${d.enabled ? "checked" : ""}>
+          신청 시 자동 저장 활성화
+        </label>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn btn-secondary btn-small" onclick="updateDriveConfig()">설정 저장</button>
+        <button id="drive-test-btn" class="btn btn-secondary btn-small" onclick="testDriveConnection()" ${hasUrl ? "" : "disabled"}>연결 테스트</button>
+        <button id="drive-sync-btn" class="btn btn-secondary btn-small" onclick="syncAllToDrive()" ${hasUrl ? "" : "disabled"}>전체 재전송 (${state.applications.length}건)</button>
+      </div>
+      ${d.lastSyncAt ? `
+        <div style="margin-top:12px; font-size:13px; color:var(--muted);">
+          마지막 동기화: ${new Date(d.lastSyncAt).toLocaleString("ko-KR")} · ${d.lastSyncResult || ""}
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function escapeHtml(s) {
+  if (!s) return "";
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function escapeAttr(s) {
+  if (!s) return "";
+  return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+function renderGroupsPanel() {
+  const apps = state.applications;
+  const cache = buildScoreCache(apps);
+  const assignedIds = new Set(state.groups.flatMap(g => g.memberIds));
+  const unassigned = apps.filter(a => !assignedIds.has(a.id));
+
+  return `
+    <div class="card">
+      <h3>그룹 배정 결과</h3>
+      ${state.groups.map(g => renderGroupCard(g, cache)).join("")}
+      ${unassigned.length ? `
+        <hr>
+        <h4>미배정 ${unassigned.length}명</h4>
+        <div class="member-list">
+          ${unassigned.map(a => {
+            const u = state.users.find(u => u.id === a.userId);
+            return `
+              <div class="member-row">
+                <div class="member-info">
+                  <div class="member-name">${u.name}</div>
+                  <div class="member-meta">${a.seniority}년 · ${a.currentJob} · ${criterionLabel(a.criterion)}</div>
+                </div>
+                <select class="move-select" onchange="moveMember('${a.id}', this.value)">
+                  <option value="">그룹으로 이동...</option>
+                  ${state.groups.filter(g => g.memberIds.length < state.session.maxGroupSize).map(g => `
+                    <option value="${g.id}">${g.id} (현재 ${g.memberIds.length}명)</option>
+                  `).join("")}
+                </select>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function renderGroupCard(g, cache) {
+  const s = state.session;
+  const members = g.memberIds.map(id => {
+    const a = state.applications.find(app => app.id === id);
+    const u = state.users.find(user => user.id === a.userId);
+    return { app: a, user: u };
+  });
+  const metrics = groupMetrics(g, cache);
+  let warn = "";
+  if (g.memberIds.length < s.minGroupSize) warn = '<span class="tag tag-warn">정원 미달</span>';
+  else if (g.memberIds.length > s.maxGroupSize) warn = '<span class="tag tag-err">정원 초과</span>';
+
+  return `
+    <div class="group-card">
+      <div class="group-title">
+        <div>
+          <strong>${g.id}</strong>
+          <span class="tag" style="margin-left:8px;">${g.origin.replace("criterion:", "").replace("mixed", "혼합")}</span>
+          ${warn}
+        </div>
+        <div style="font-size:13px; color:var(--muted);">
+          ${g.memberIds.length}명 · 평균 ${metrics.avg.toFixed(1)}점 / 최저 ${metrics.min.toFixed(1)}점
+        </div>
+      </div>
+      <div class="member-list">
+        ${members.map(({app: a, user: u}) => `
+          <div class="member-row">
+            <div class="member-info">
+              <div class="member-name">${u.name}
+                <span class="tag tag-${a.criterion === "seniority" ? "seniority" : a.criterion === "job" ? "job" : "topic"}">${criterionLabel(a.criterion)}</span>
+              </div>
+              <div class="member-meta">
+                ${a.seniority}년 · ${a.currentJob}
+                ${a.topics.length ? " · 주제: " + a.topics.join(", ") : ""}
+                ${a.concern ? " · 고민: " + a.concern.slice(0, 40) + (a.concern.length > 40 ? "…" : "") : ""}
+              </div>
+            </div>
+            ${!state.confirmed ? `
+              <select class="move-select" onchange="moveMember('${a.id}', this.value)">
+                <option value="">이동...</option>
+                <option value="__unassign">미배정으로</option>
+                ${state.groups.filter(og => og.id !== g.id && og.memberIds.length < s.maxGroupSize).map(og => `
+                  <option value="${og.id}">${og.id}</option>
+                `).join("")}
+              </select>
+            ` : ""}
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderApplicantsTable() {
+  if (!state.applications.length) return `
+    <div class="card">
+      <h3>신청자</h3>
+      <div class="empty">아직 신청자가 없습니다. 상단에서 샘플 데이터를 로드하거나, 사용자 뷰에서 신청을 받아보세요.</div>
+    </div>
+  `;
+
+  return `
+    <div class="card">
+      <h3>신청자 목록 (${state.applications.length}명)</h3>
+      <div style="overflow-x: auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>이름</th>
+            <th>연차</th>
+            <th>직무</th>
+            <th>기준</th>
+            <th>세부 선호</th>
+            <th>주제 / 고민</th>
+            <th>그룹</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${state.applications.map(a => {
+            const u = state.users.find(u => u.id === a.userId);
+            const group = state.groups?.find(g => g.memberIds.includes(a.id));
+            let detail = "";
+            if (a.criterion === "seniority") detail = SENIORITY_OPTIONS.find(o => o.value === a.desiredSeniority)?.label || "-";
+            else if (a.criterion === "job") detail = a.desiredJobs.join(", ");
+            else detail = "-";
+            return `
+              <tr>
+                <td><strong>${u.name}</strong></td>
+                <td>${a.seniority}년</td>
+                <td>${a.currentJob}</td>
+                <td><span class="tag tag-${a.criterion === "seniority" ? "seniority" : a.criterion === "job" ? "job" : "topic"}">${criterionLabel(a.criterion)}</span></td>
+                <td style="font-size:13px;">${detail}</td>
+                <td style="font-size:13px; max-width: 260px;">
+                  ${a.topics.length ? `<div>${a.topics.join(", ")}</div>` : ""}
+                  ${a.concern ? `<div style="color:var(--muted); margin-top:2px;">${a.concern.slice(0, 50)}${a.concern.length > 50 ? "…" : ""}</div>` : ""}
+                </td>
+                <td>${group ? `<span class="tag">${group.id}</span>` : `<span class="tag tag-warn">미배정</span>`}</td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+      </div>
+    </div>
+  `;
+}
+
+function criterionLabel(c) { return {seniority:"연차", job:"직무", topic:"주제"}[c]; }
+
+function runAssignment() {
+  if (state.confirmed) {
+    if (!confirm("확정된 그룹을 해제하고 다시 배정하시겠습니까?")) return;
+    state.confirmed = false;
+  }
+  const result = assignSession(state.applications, state.session);
+  state.groups = result.groups;
+  saveState();
+  render();
+}
+
+function moveMember(appId, target) {
+  if (!target) return;
+  // 현재 그룹에서 제거
+  for (const g of state.groups) {
+    g.memberIds = g.memberIds.filter(id => id !== appId);
+  }
+  // 대상에 추가
+  if (target !== "__unassign") {
+    const g = state.groups.find(g => g.id === target);
+    if (g) g.memberIds.push(appId);
+  }
+  // 빈 그룹 제거
+  state.groups = state.groups.filter(g => g.memberIds.length > 0);
+  saveState();
+  render();
+}
+
+function confirmGroups() {
+  const s = state.session;
+  const warnings = [];
+  const smallGroups = state.groups.filter(g => g.memberIds.length < s.minGroupSize);
+  const bigGroups = state.groups.filter(g => g.memberIds.length > s.maxGroupSize);
+  if (smallGroups.length) warnings.push(`정원 미달 그룹 ${smallGroups.length}개`);
+  if (bigGroups.length) warnings.push(`정원 초과 그룹 ${bigGroups.length}개`);
+  const assignedIds = new Set(state.groups.flatMap(g => g.memberIds));
+  const unassigned = state.applications.filter(a => !assignedIds.has(a.id));
+  if (unassigned.length) warnings.push(`미배정 ${unassigned.length}명`);
+
+  const msg = warnings.length
+    ? "다음 항목을 확인해주세요:\n\n" + warnings.map(w => "· " + w).join("\n") + "\n\n그래도 확정하시겠습니까?"
+    : "그룹을 확정하고 사용자에게 결과를 공개합니다. 계속하시겠습니까?";
+
+  if (!confirm(msg)) return;
+  state.confirmed = true;
+  saveState();
+  render();
+}
+
+function unconfirmGroups() {
+  if (!confirm("확정을 해제합니다. 사용자에게 그룹 결과가 더 이상 보이지 않게 됩니다.")) return;
+  state.confirmed = false;
+  saveState();
+  render();
+}
+
+// ===========================================================================
+// 사용자 · 샘플 데이터
+// ===========================================================================
+function openNewUserModal() {
+  const html = `
+    <div class="modal-overlay" onclick="closeModal(event)">
+      <div class="modal" onclick="event.stopPropagation()">
+        <h3>새 사용자 만들기</h3>
+        <p class="section-desc">실제 서비스에서는 HFK 회원 로그인으로 자동 인식됩니다.</p>
+        <label>이름</label>
+        <input type="text" id="new-user-name" placeholder="예: 김하늘" onkeydown="if(event.key==='Enter') createUser()">
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal()">취소</button>
+          <button class="btn" onclick="createUser()">만들기</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById("modal-root").innerHTML = html;
+  document.getElementById("new-user-name").focus();
+}
+function closeModal(e) {
+  if (e && e.target !== e.currentTarget) return;
+  document.getElementById("modal-root").innerHTML = "";
+}
+function createUser() {
+  const name = document.getElementById("new-user-name").value.trim();
+  if (!name) return alert("이름을 입력해주세요.");
+  const id = "u" + Date.now();
+  state.users.push({ id, name });
+  state.currentUserId = id;
+  saveState();
+  closeModal();
+  render();
+}
+
+function loadSampleData() {
+  if (state.users.length && !confirm("기존 데이터가 있습니다. 샘플로 덮어쓸까요?")) return;
+  state.users = [];
+  state.applications = [];
+  state.groups = null;
+  state.confirmed = false;
+
+  const samples = [
+    // 연차 6
+    {name:"김선배", seniority:12, currentJob:"경영기획", criterion:"seniority", desiredSeniority:"similar",
+     concern:"팀 리더로서 성과 관리가 어렵다", experience:"10년간 전략 조직 리드"},
+    {name:"박중견", seniority:11, currentJob:"전략", criterion:"seniority", desiredSeniority:"similar",
+     concern:"시니어 매니저 역할 전환 고민", experience:"컨설팅 인하우스 전환"},
+    {name:"이경력", seniority:8, currentJob:"마케팅", criterion:"seniority", desiredSeniority:"similar",
+     concern:"첫 팀장 역할, 팀원 관리 노하우", experience:"퍼포먼스 마케팅 8년"},
+    {name:"정중반", seniority:7, currentJob:"브랜드", criterion:"seniority", desiredSeniority:"senior",
+     concern:"브랜드 전략 수립 프레임", experience:"B2C 브랜드 리뉴얼 3건"},
+    {name:"최주니어", seniority:4, currentJob:"개발", criterion:"seniority", desiredSeniority:"senior",
+     concern:"시니어 개발자로 성장하는 길", experience:"스타트업 초기 멤버"},
+    {name:"강신입", seniority:3, currentJob:"데이터", criterion:"seniority", desiredSeniority:"senior",
+     concern:"분석가 커리어 방향", experience:"SQL과 대시보드 구축"},
+    // 직무 6
+    {name:"한마케팅", seniority:6, currentJob:"마케팅", criterion:"job", desiredJobs:["브랜드","제품"],
+     concern:"브랜드 마케터로 전환하고 싶다", experience:"퍼포먼스 브랜드 이동 경험"},
+    {name:"윤브랜드", seniority:7, currentJob:"브랜드", criterion:"job", desiredJobs:["마케팅","디자인"],
+     concern:"브랜드 팀 세팅", experience:"브랜드 팀 셋업"},
+    {name:"노기획", seniority:5, currentJob:"서비스 기획", criterion:"job", desiredJobs:["제품","데이터"],
+     concern:"데이터 기반 기획 역량", experience:"B2B SaaS 기획 5년"},
+    {name:"서프로덕트", seniority:8, currentJob:"제품", criterion:"job", desiredJobs:["서비스 기획","개발"],
+     concern:"PM 역할 정의", experience:"PM 리드로 3년"},
+    {name:"임인사", seniority:9, currentJob:"인사", criterion:"job", desiredJobs:["조직문화","경영기획"],
+     concern:"조직문화 개선 사례", experience:"HR BP 5년"},
+    {name:"장문화", seniority:6, currentJob:"조직문화", criterion:"job", desiredJobs:["인사","브랜드"],
+     concern:"문화팀 없이 문화 만들기", experience:"AAR과 회고 워크숍 운영"},
+    // 주제 6
+    {name:"오AI", seniority:5, currentJob:"개발", criterion:"topic", topics:["AI 활용","새로운 사업","기획력"],
+     concern:"AI 프로덕트 기획 실전", experience:"LLM 파이프라인 구축"},
+    {name:"권기획", seniority:7, currentJob:"서비스 기획", criterion:"topic", topics:["AI 활용","기획력","새로운 사업"],
+     concern:"AI 시대 기획자 역할", experience:"AI 기능 릴리즈"},
+    {name:"황리더", seniority:10, currentJob:"경영기획", criterion:"topic", topics:["리더십","팀 관리","조직문화"],
+     concern:"팀장 첫 1년", experience:"10명 팀 리드"},
+    {name:"송매니저", seniority:9, currentJob:"인사", criterion:"topic", topics:["리더십","조직문화"],
+     concern:"MZ 팀원과 시니어의 갈등", experience:"1대1 코칭 도입"},
+    {name:"배창업", seniority:8, currentJob:"창업", criterion:"topic", topics:["독립과 창업","사이드 프로젝트"],
+     concern:"첫 창업 준비", experience:"사이드 프로젝트 2건"},
+    {name:"구프리", seniority:6, currentJob:"디자인", criterion:"topic", topics:["독립과 창업","커리어 전환"],
+     concern:"프리랜서 전환 시점", experience:"프리랜서 3년"},
+  ];
+
+  samples.forEach((s, i) => {
+    const userId = "u_sample_" + i;
+    state.users.push({ id: userId, name: s.name });
+    state.applications.push({
+      id: "a_sample_" + i,
+      userId,
+      seniority: s.seniority,
+      currentJob: s.currentJob,
+      criterion: s.criterion,
+      desiredSeniority: s.desiredSeniority || null,
+      desiredJobs: s.desiredJobs || [],
+      topics: s.topics || [],
+      concern: s.concern,
+      experience: s.experience,
+      disclose: ["회사","직무","연차","고민","관심 주제"],
+      createdAt: new Date().toISOString(),
+    });
+  });
+
+  saveState();
+  render();
+}
+
+// ===========================================================================
+// 뷰 전환 & 초기 렌더
+// ===========================================================================
+function setView(view) {
+  document.getElementById("nav-user").classList.toggle("active", view === "user");
+  document.getElementById("nav-admin").classList.toggle("active", view === "admin");
+  document.getElementById("view-user").classList.toggle("hidden", view !== "user");
+  document.getElementById("view-admin").classList.toggle("hidden", view !== "admin");
+  render();
+}
+
+function render() {
+  renderUserView();
+  renderAdminView();
+}
+
+render();
+</script>
+
+</body>
+</html>
