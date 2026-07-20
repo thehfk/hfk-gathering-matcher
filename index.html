@@ -458,12 +458,17 @@ function migrate(s) {
 function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
 
 // ===========================================================================
-// 관리자 로그인 (비밀번호 하나로 UI 잠금 + API 토큰 통합)
+// 관리자 로그인 (해시 대조 · 원문 비밀번호는 소스에 저장 안 함)
 // ===========================================================================
-// 비밀번호는 Apps Script Script Properties의 ADMIN_TOKEN 값과 대조.
-// 로그인 성공한 비밀번호는 sessionStorage에 저장되어 admin API 요청 시 자동 첨부.
-// 탭 닫으면 자동 로그아웃.
 const ADMIN_SESSION_KEY = "hfk_admin_password";
+const ADMIN_SALT = "hfk-gathering-v1";
+const ADMIN_PASSWORD_HASH = "c00083953abb453ca4ac50abb1929375d5ba0ea0feff4462e49f18c0badd49cf";
+
+async function sha256(text) {
+  const buf = new TextEncoder().encode(text);
+  const hash = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
 
 function adminPassword() { return sessionStorage.getItem(ADMIN_SESSION_KEY) || ""; }
 function isAdminUnlocked() { return !!adminPassword(); }
@@ -474,17 +479,8 @@ function lockAdmin() {
 
 async function loginAdmin(password) {
   if (!password) return { ok: false, error: "비밀번호를 입력해주세요." };
-
-  // 서버가 설정돼 있으면 반드시 검증
-  if (state.drive.webAppUrl) {
-    try {
-      const result = await postToDrive({ type: "verifyPassword", password });
-      if (!result.ok) return { ok: false, error: result.error || "비밀번호가 일치하지 않습니다." };
-    } catch (e) {
-      return { ok: false, error: "서버 확인 실패: " + e.message };
-    }
-  }
-  // 서버 URL 없으면 개발/데모 모드 — 아무 비밀번호나 허용
+  const hash = await sha256(password + ADMIN_SALT);
+  if (hash !== ADMIN_PASSWORD_HASH) return { ok: false, error: "비밀번호가 일치하지 않습니다." };
   sessionStorage.setItem(ADMIN_SESSION_KEY, password);
   return { ok: true };
 }
@@ -1588,20 +1584,13 @@ function unselectAdminSession() {
 }
 
 function renderAdminLockScreen() {
-  const noServer = !state.drive.webAppUrl;
   return `
     <div class="card" style="max-width:420px; margin: 60px auto;">
       <h3>관리자 로그인</h3>
-      ${noServer ? `
-        <div class="banner banner-warn" style="margin-bottom:12px;">
-          Google Sheets 연동이 설정돼 있지 않아 서버 검증 없이 접근합니다 (개발/데모 모드).
-        </div>
-      ` : `
-        <p class="section-desc">Apps Script에 설정된 관리자 비밀번호를 입력해주세요.</p>
-      `}
+      <p class="section-desc">관리자 비밀번호를 입력해주세요.</p>
       <div class="form-row">
         <label>비밀번호</label>
-        <input type="password" id="admin-password" placeholder="관리자 비밀번호" autocomplete="off"
+        <input type="password" id="admin-password" placeholder="비밀번호" autocomplete="off"
           onkeydown="if(event.key==='Enter') submitAdminLogin()">
       </div>
       <button class="btn" onclick="submitAdminLogin()">로그인</button>
@@ -1610,8 +1599,7 @@ function renderAdminLockScreen() {
 }
 
 async function submitAdminLogin() {
-  const input = document.getElementById("admin-password");
-  const password = input?.value || "";
+  const password = document.getElementById("admin-password")?.value || "";
   const result = await loginAdmin(password);
   if (!result.ok) return alert(result.error);
   render();
