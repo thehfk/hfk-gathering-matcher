@@ -100,6 +100,8 @@
   .btn-secondary:hover { background: #f5f5f0; }
   .btn-ghost { background: none; color: var(--muted); border: none; padding: 4px 8px; font-size: 13px; cursor: pointer; }
   .btn-ghost:hover { color: var(--text); }
+  .btn-danger { background: white; color: var(--err); border: 1px solid var(--border); }
+  .btn-danger:hover { background: #fdf3f0; }
   .btn-small { padding: 6px 12px; font-size: 13px; }
   input, select, textarea {
     width: 100%;
@@ -258,6 +260,27 @@
   .hidden { display: none !important; }
   hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
   code { background: #f0f0eb; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+  .session-card {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 10px;
+    background: white;
+  }
+  .session-card.selected {
+    border-color: var(--hfk-red);
+    background: #fdf5f5;
+  }
+  .session-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .session-card-title { font-size: 16px; font-weight: 600; }
+  .session-card-meta { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .session-card-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 </style>
 </head>
 <body>
@@ -279,7 +302,7 @@
 
 <script>
 // ===========================================================================
-// 도메인 상수 (요구서 4.6, 4.7 예시)
+// 도메인 상수
 // ===========================================================================
 const JOB_LIST = [
   "경영기획","전략","사업기획","사업개발","마케팅","브랜드",
@@ -314,14 +337,32 @@ const SENIORITY_OPTIONS = [
 ];
 
 // ===========================================================================
-// 상태 관리 (localStorage)
+// 상태 관리
 // ===========================================================================
-const STORAGE_KEY = "hfk_gathering_state_v1";
+const STORAGE_KEY = "hfk_gathering_state_v2";
+
+function genId(prefix) { return prefix + "_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6); }
+
+function newBlankSession() {
+  return {
+    id: genId("s"),
+    name: "새 게더링",
+    date: "",
+    time: "",
+    location: "",
+    intro: "",
+    targetGroupSize: 5,
+    minGroupSize: 4,
+    maxGroupSize: 6,
+    applyDeadline: "",
+    confirmDate: "",
+  };
+}
 
 function defaultState() {
   return {
-    session: {
-      id: "s1",
+    sessions: [{
+      id: "s_default",
       name: "2026 여름 HFK 게더링",
       date: "2026-08-15",
       time: "19:00-21:30",
@@ -332,12 +373,12 @@ function defaultState() {
       maxGroupSize: 6,
       applyDeadline: "2026-08-08",
       confirmDate: "2026-08-11",
-    },
+    }],
     currentUserId: null,
     users: [],
-    applications: [],
-    groups: null,
-    confirmed: false,
+    applications: [],       // {id, userId, sessionId, ...}
+    groups: {},             // {sessionId: [{id, origin, memberIds}]}
+    confirmed: {},          // {sessionId: bool}
     drive: {
       webAppUrl: "",
       enabled: false,
@@ -348,32 +389,62 @@ function defaultState() {
 }
 
 let state = loadState();
-let uiState = { editing: false };
+let uiState = {
+  editingApplication: null,      // sessionId | null (사용자 신청 폼 편집 모드)
+  applyingSessionId: null,       // 사용자가 신청서 열어둔 세션 id
+  editingSessionId: null,        // 관리자 세션 편집 중인 id ("new" | id | null)
+  adminSelectedSessionId: null,  // 관리자가 관리 중인 세션 id
+};
 
 function loadState() {
   try {
+    // v2 저장소 확인
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const s = JSON.parse(raw);
-      // 이전 버전 마이그레이션: drive 필드 없으면 추가
-      if (!s.drive) s.drive = defaultState().drive;
-      return s;
+      return migrate(s);
     }
-  } catch(e) {}
+    // v1 저장소 확인 → 마이그레이션
+    const legacy = localStorage.getItem("hfk_gathering_state_v1");
+    if (legacy) {
+      const s = JSON.parse(legacy);
+      return migrate(s);
+    }
+  } catch(e) { console.warn("state load error:", e); }
   return defaultState();
 }
+
+function migrate(s) {
+  // v1: single session → v2: sessions array
+  if (s.session && !s.sessions) {
+    const sid = s.session.id || "s_default";
+    s.sessions = [{...s.session, id: sid}];
+    s.applications = (s.applications || []).map(a => ({...a, sessionId: sid}));
+    s.groups = s.groups ? {[sid]: s.groups} : {};
+    s.confirmed = { [sid]: !!s.confirmed };
+    delete s.session;
+  }
+  if (!Array.isArray(s.sessions)) s.sessions = [];
+  if (!Array.isArray(s.applications)) s.applications = [];
+  if (!Array.isArray(s.users)) s.users = [];
+  if (!s.groups || Array.isArray(s.groups)) s.groups = {};
+  if (!s.confirmed || typeof s.confirmed !== "object") s.confirmed = {};
+  if (!s.drive) s.drive = defaultState().drive;
+  return s;
+}
+
 function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
 function resetState() {
   if (!confirm("모든 데이터를 초기화합니다. 계속하시겠습니까?")) return;
   state = defaultState();
+  uiState = { editingApplication: null, applyingSessionId: null, editingSessionId: null, adminSelectedSessionId: null };
   saveState();
   render();
 }
 
 // ===========================================================================
-// Google Drive 연동 (Apps Script Web App)
+// Google Drive 연동
 // ===========================================================================
-// text/plain 사용: 브라우저 preflight 방지 (Apps Script는 e.postData.contents로 받음)
 async function postToDrive(payload) {
   const url = state.drive.webAppUrl;
   if (!url) throw new Error("Web App URL이 설정되어 있지 않습니다.");
@@ -389,8 +460,11 @@ async function postToDrive(payload) {
 
 function serializeApp(app) {
   const user = state.users.find(u => u.id === app.userId);
+  const session = state.sessions.find(s => s.id === app.sessionId);
   return {
     id: app.id,
+    sessionId: app.sessionId,
+    sessionName: session?.name || "",
     name: user?.name || "(이름 없음)",
     seniority: app.seniority,
     currentJob: app.currentJob,
@@ -408,11 +482,15 @@ function serializeApp(app) {
 async function pushApplicationToDrive(app) {
   if (!state.drive.enabled || !state.drive.webAppUrl) return;
   try {
-    const result = await postToDrive({ type: "application", payload: serializeApp(app) });
-    console.log("Drive 저장:", result);
-  } catch (e) {
-    console.warn("Drive 저장 실패 (로컬은 정상 저장됨):", e);
-  }
+    await postToDrive({ type: "application", payload: serializeApp(app) });
+  } catch (e) { console.warn("Drive 저장 실패:", e); }
+}
+
+async function pushSessionToDrive(session) {
+  if (!state.drive.enabled || !state.drive.webAppUrl) return;
+  try {
+    await postToDrive({ type: "session", payload: session });
+  } catch (e) { console.warn("세션 저장 실패:", e); }
 }
 
 async function testDriveConnection() {
@@ -422,7 +500,7 @@ async function testDriveConnection() {
     const result = await postToDrive({ type: "ping" });
     alert("연결 성공: " + (result.message || "OK"));
   } catch (e) {
-    alert("연결 실패: " + e.message + "\n\nURL이 정확한지, Apps Script가 '모든 사용자' 접근으로 배포됐는지 확인해주세요.");
+    alert("연결 실패: " + e.message);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "연결 테스트"; }
   }
@@ -435,10 +513,10 @@ async function syncAllToDrive() {
     const result = await postToDrive({
       type: "syncAll",
       applications: state.applications.map(serializeApp),
-      session: state.session,
+      sessions: state.sessions,
     });
     state.drive.lastSyncAt = new Date().toISOString();
-    state.drive.lastSyncResult = `신청 ${result.appCount || 0}건 전송 완료`;
+    state.drive.lastSyncResult = `신청 ${result.appCount || 0}건 · 세션 ${result.sessionCount || 0}건 전송`;
     saveState();
     render();
     alert(state.drive.lastSyncResult);
@@ -450,26 +528,15 @@ async function syncAllToDrive() {
   }
 }
 
-async function pushSessionToDrive() {
-  if (!state.drive.enabled || !state.drive.webAppUrl) return;
-  try {
-    await postToDrive({ type: "session", payload: state.session });
-  } catch (e) {
-    console.warn("세션 정보 Drive 저장 실패:", e);
-  }
-}
-
 function updateDriveConfig() {
-  const url = document.getElementById("drive-url").value.trim();
-  const enabled = document.getElementById("drive-enabled").checked;
-  state.drive.webAppUrl = url;
-  state.drive.enabled = enabled;
+  state.drive.webAppUrl = document.getElementById("drive-url").value.trim();
+  state.drive.enabled = document.getElementById("drive-enabled").checked;
   saveState();
   render();
 }
 
 // ===========================================================================
-// 매칭 알고리즘 (matcher.py 포팅)
+// 매칭 알고리즘
 // ===========================================================================
 function seniorityRange(app) {
   const y = app.seniority;
@@ -482,31 +549,17 @@ function seniorityRange(app) {
 }
 
 function scorePair(a, b) {
-  if (a.userIdForDate !== b.userIdForDate) {}  // 단일 세션 데모라 날짜 체크는 세션 ID로 대체
   let total = 0;
-
-  // 1. 기준 일치 (30)
   if (a.criterion === b.criterion) total += 30;
-
-  // 2. 세부 선호 (30)
   total += subPreferenceScore(a, b);
-
-  // 3. 연차 유사도 (15)
   const diff = Math.abs(a.seniority - b.seniority);
   if (diff === 0) total += 15;
   else if (diff <= 2) total += 12;
   else if (diff <= 4) total += 8;
   else if (diff <= 6) total += 4;
-
-  // 4. 직무 연관성 (15)
   total += jobRelationScore(a.currentJob, b.currentJob);
-
-  // 5. 주제 유사도 (20)
   total += topicSimilarityScore(a.topics || [], b.topics || []);
-
-  // 6. 고민-경험 (10)
   total += concernExperienceScore(a, b);
-
   return Math.min(100, total);
 }
 
@@ -527,23 +580,17 @@ function subPreferenceScore(a, b) {
     if (shared.length >= 2) return 30;
     if (shared.length === 1) return 20;
     for (const cluster of TOPIC_CLUSTERS) {
-      const aHit = (a.topics||[]).some(t => cluster.includes(t));
-      const bHit = (b.topics||[]).some(t => cluster.includes(t));
-      if (aHit && bHit) return 10;
+      if ((a.topics||[]).some(t => cluster.includes(t)) && (b.topics||[]).some(t => cluster.includes(t))) return 10;
     }
     return 0;
   }
   return 0;
 }
-
 function jobRelationScore(ja, jb) {
   if (ja === jb) return 15;
-  for (const g of JOB_GROUPS) {
-    if (g.includes(ja) && g.includes(jb)) return 10;
-  }
+  for (const g of JOB_GROUPS) if (g.includes(ja) && g.includes(jb)) return 10;
   return 0;
 }
-
 function topicSimilarityScore(ta, tb) {
   const shared = ta.filter(t => tb.includes(t)).length;
   if (shared >= 3) return 20;
@@ -554,13 +601,10 @@ function topicSimilarityScore(ta, tb) {
   }
   return 0;
 }
-
 function tokenize(text) {
   if (!text) return new Set();
-  const tokens = text.replace(/[.,]/g, " ").split(/\s+/).filter(t => t.length >= 2);
-  return new Set(tokens);
+  return new Set(text.replace(/[.,]/g, " ").split(/\s+/).filter(t => t.length >= 2));
 }
-
 function concernExperienceScore(a, b) {
   let score = 0;
   const pairs = [
@@ -576,31 +620,24 @@ function concernExperienceScore(a, b) {
   }
   return Math.min(10, score);
 }
-
+function pairKey(a, b) { return a < b ? a+"|"+b : b+"|"+a; }
 function buildScoreCache(apps) {
   const cache = {};
-  for (let i=0; i<apps.length; i++) {
-    for (let j=i+1; j<apps.length; j++) {
-      const key = pairKey(apps[i].id, apps[j].id);
-      cache[key] = scorePair(apps[i], apps[j]);
-    }
+  for (let i=0; i<apps.length; i++) for (let j=i+1; j<apps.length; j++) {
+    cache[pairKey(apps[i].id, apps[j].id)] = scorePair(apps[i], apps[j]);
   }
   return cache;
 }
-function pairKey(a, b) { return a < b ? a+"|"+b : b+"|"+a; }
-
 function avgScoreToGroup(cand, group, cache) {
   if (!group.length) return 0;
   let sum = 0;
   for (const m of group) sum += cache[pairKey(cand.id, m.id)] || 0;
   return sum / group.length;
 }
-
 function formGroups(pool, session, origin, counter, cache) {
   const remaining = [...pool];
   const groups = [];
   while (remaining.length >= session.minGroupSize) {
-    // 시드: 나머지와 평균 점수 최고
     let seed = remaining[0], seedScore = -1;
     for (const p of remaining) {
       let s = 0, n = 0;
@@ -610,7 +647,6 @@ function formGroups(pool, session, origin, counter, cache) {
     }
     const group = [seed];
     remaining.splice(remaining.indexOf(seed), 1);
-
     while (group.length < session.targetGroupSize && remaining.length) {
       let best = remaining[0], bestScore = -1;
       for (const p of remaining) {
@@ -620,7 +656,6 @@ function formGroups(pool, session, origin, counter, cache) {
       group.push(best);
       remaining.splice(remaining.indexOf(best), 1);
     }
-
     groups.push({
       id: "G" + String(counter.value++).padStart(3, "0"),
       origin,
@@ -629,13 +664,11 @@ function formGroups(pool, session, origin, counter, cache) {
   }
   return { groups, leftover: remaining };
 }
-
 function assignSession(applications, session) {
   const cache = buildScoreCache(applications);
   const counter = { value: 1 };
   const allGroups = [];
   const leftover = [];
-
   for (const criterion of ["seniority", "job", "topic"]) {
     const pool = applications.filter(a => a.criterion === criterion);
     if (!pool.length) continue;
@@ -643,16 +676,12 @@ function assignSession(applications, session) {
     allGroups.push(...groups);
     leftover.push(...rem);
   }
-
-  // 2단계: 잔여 인원 통합
   let finalUnassigned = leftover;
   if (leftover.length >= session.minGroupSize) {
     const { groups, leftover: rem2 } = formGroups(leftover, session, "mixed", counter, cache);
     allGroups.push(...groups);
     finalUnassigned = rem2;
   }
-
-  // 3단계: 남은 인원 기존 그룹에 편입 (max 이내)
   const stillUnassigned = [];
   for (const p of finalUnassigned) {
     const sortedGroups = [...allGroups].sort((g1, g2) => {
@@ -670,23 +699,82 @@ function assignSession(applications, session) {
     }
     if (!placed) stillUnassigned.push(p);
   }
-
   return { groups: allGroups, unassigned: stillUnassigned.map(p => p.id), cache };
 }
-
 function groupMetrics(group, cache) {
   const ids = group.memberIds;
   if (ids.length < 2) return { avg: 0, min: 0 };
   const scores = [];
-  for (let i=0; i<ids.length; i++) {
-    for (let j=i+1; j<ids.length; j++) {
-      scores.push(cache[pairKey(ids[i], ids[j])] || 0);
-    }
+  for (let i=0; i<ids.length; i++) for (let j=i+1; j<ids.length; j++) {
+    scores.push(cache[pairKey(ids[i], ids[j])] || 0);
   }
-  return {
-    avg: scores.reduce((a,b) => a+b, 0) / scores.length,
-    min: Math.min(...scores),
+  return { avg: scores.reduce((a,b) => a+b, 0) / scores.length, min: Math.min(...scores) };
+}
+
+// ===========================================================================
+// 세션 관리
+// ===========================================================================
+function createNewSession() {
+  const s = newBlankSession();
+  state.sessions.push(s);
+  uiState.editingSessionId = s.id;
+  saveState();
+  render();
+}
+
+function saveSessionEdit(sessionId) {
+  const target = parseInt(document.getElementById("s-target").value);
+  const min = parseInt(document.getElementById("s-min").value);
+  const max = parseInt(document.getElementById("s-max").value);
+  if (min > target || target > max) {
+    return alert("그룹 크기 관계가 맞지 않습니다.\n최소 ≤ 목표 ≤ 최대");
+  }
+  const idx = state.sessions.findIndex(s => s.id === sessionId);
+  if (idx < 0) return;
+  const updated = {
+    ...state.sessions[idx],
+    name: document.getElementById("s-name").value.trim() || state.sessions[idx].name,
+    date: document.getElementById("s-date").value,
+    time: document.getElementById("s-time").value.trim(),
+    location: document.getElementById("s-location").value.trim(),
+    intro: document.getElementById("s-intro").value.trim(),
+    targetGroupSize: target,
+    minGroupSize: min,
+    maxGroupSize: max,
+    applyDeadline: document.getElementById("s-deadline").value,
+    confirmDate: document.getElementById("s-confirm").value,
   };
+  state.sessions[idx] = updated;
+  uiState.editingSessionId = null;
+  saveState();
+  render();
+  pushSessionToDrive(updated);
+}
+
+function deleteSession(sessionId) {
+  const session = state.sessions.find(s => s.id === sessionId);
+  if (!session) return;
+  const appCount = state.applications.filter(a => a.sessionId === sessionId).length;
+  const msg = appCount > 0
+    ? `[${session.name}] 세션과 관련 신청 ${appCount}건, 그룹 배정 데이터를 모두 삭제합니다. 계속하시겠습니까?`
+    : `[${session.name}] 세션을 삭제하시겠습니까?`;
+  if (!confirm(msg)) return;
+  state.sessions = state.sessions.filter(s => s.id !== sessionId);
+  state.applications = state.applications.filter(a => a.sessionId !== sessionId);
+  delete state.groups[sessionId];
+  delete state.confirmed[sessionId];
+  if (uiState.adminSelectedSessionId === sessionId) uiState.adminSelectedSessionId = null;
+  if (uiState.applyingSessionId === sessionId) uiState.applyingSessionId = null;
+  saveState();
+  render();
+}
+
+function sessionStatusTag(session) {
+  if (state.confirmed[session.id]) return '<span class="tag tag-ok">그룹 확정</span>';
+  if (state.groups[session.id]) return '<span class="tag tag-warn">그룹 배정 중</span>';
+  const today = new Date().toISOString().slice(0, 10);
+  if (session.applyDeadline && session.applyDeadline < today) return '<span class="tag">신청 마감</span>';
+  return '<span class="tag tag-ok">신청 가능</span>';
 }
 
 // ===========================================================================
@@ -694,9 +782,7 @@ function groupMetrics(group, cache) {
 // ===========================================================================
 function renderUserView() {
   const root = document.getElementById("view-user");
-  const s = state.session;
   const currentUser = state.users.find(u => u.id === state.currentUserId);
-  const myApp = currentUser ? state.applications.find(a => a.userId === currentUser.id) : null;
 
   let html = `
     <div class="card">
@@ -704,58 +790,57 @@ function renderUserView() {
       <div style="display:flex; gap:8px; align-items:flex-end;">
         <select id="user-select" onchange="switchUser(this.value)" style="flex:1;">
           <option value="">— 사용자 선택 —</option>
-          ${state.users.map(u => `
-            <option value="${u.id}" ${u.id === state.currentUserId ? "selected":""}>
-              ${u.name}${state.applications.find(a => a.userId === u.id) ? " (신청함)" : ""}
-            </option>
-          `).join("")}
+          ${state.users.map(u => {
+            const appCount = state.applications.filter(a => a.userId === u.id).length;
+            return `<option value="${u.id}" ${u.id === state.currentUserId ? "selected":""}>
+              ${escapeHtml(u.name)}${appCount ? ` (신청 ${appCount}건)` : ""}
+            </option>`;
+          }).join("")}
         </select>
         <button class="btn btn-secondary btn-small" onclick="openNewUserModal()">+ 새 사용자</button>
       </div>
     </div>
-
-    <div class="card">
-      <div class="card-header">
-        <div>
-          <h2>${s.name}</h2>
-          <p class="section-desc">${s.intro}</p>
-        </div>
-      </div>
-      <div class="grid-4">
-        <div><h4>날짜</h4>${s.date}</div>
-        <div><h4>시간</h4>${s.time}</div>
-        <div><h4>장소</h4>${s.location}</div>
-        <div><h4>그룹 크기</h4>${s.targetGroupSize}명 (${s.minGroupSize}~${s.maxGroupSize})</div>
-      </div>
-      <hr>
-      <div class="grid-3">
-        <div><h4>신청 마감</h4>${s.applyDeadline}</div>
-        <div><h4>그룹 확정 예정</h4>${s.confirmDate}</div>
-        <div><h4>상태</h4>
-          ${state.confirmed
-            ? '<span class="tag tag-ok">그룹 확정 · 결과 공개</span>'
-            : state.groups
-              ? '<span class="tag tag-warn">그룹 배정 중</span>'
-              : '<span class="tag tag-ok">신청 접수 중</span>'}
-        </div>
-      </div>
-    </div>
   `;
 
-  if (!currentUser) {
-    html += `<div class="empty">먼저 상단에서 사용자를 선택하거나 새로 만들어주세요.</div>`;
+  if (!state.sessions.length) {
+    html += `<div class="empty">현재 등록된 게더링이 없습니다.<br>관리자 뷰에서 게더링을 생성해주세요.</div>`;
     root.innerHTML = html;
     return;
   }
 
-  if (!myApp) {
-    html += renderApplicationForm(null);
-  } else if (uiState.editing) {
-    html += renderApplicationForm(myApp);
-  } else {
-    html += renderMyApplication(myApp);
-    if (state.confirmed && state.groups) {
-      html += renderMyGroup(myApp);
+  // 신청 가능한 세션 목록
+  html += `<div class="card"><h3>게더링 목록</h3>
+    <p class="section-desc">참가하고 싶은 게더링을 선택해 신청하세요.</p>`;
+  for (const s of state.sessions) {
+    html += renderUserSessionCard(s, currentUser);
+  }
+  html += `</div>`;
+
+  // 현재 신청 폼이 열려있는 세션
+  if (currentUser && uiState.applyingSessionId) {
+    const targetSession = state.sessions.find(s => s.id === uiState.applyingSessionId);
+    if (targetSession) {
+      const existing = state.applications.find(a => a.userId === currentUser.id && a.sessionId === targetSession.id);
+      html += renderApplicationForm(targetSession, existing);
+    }
+  }
+
+  // 내 신청 내역
+  if (currentUser) {
+    const myApps = state.applications.filter(a => a.userId === currentUser.id);
+    if (myApps.length) {
+      html += `<div class="card"><h3>내 신청 내역</h3>`;
+      for (const app of myApps) {
+        html += renderMyApplicationBrief(app);
+      }
+      html += `</div>`;
+
+      // 확정된 그룹 결과
+      for (const app of myApps) {
+        if (state.confirmed[app.sessionId] && state.groups[app.sessionId]) {
+          html += renderMyGroup(app);
+        }
+      }
     }
   }
 
@@ -763,12 +848,62 @@ function renderUserView() {
   attachFormHandlers();
 }
 
-function renderApplicationForm(existing) {
+function renderUserSessionCard(session, currentUser) {
+  const s = session;
+  const myApp = currentUser && state.applications.find(a => a.userId === currentUser.id && a.sessionId === s.id);
+  const applicantCount = state.applications.filter(a => a.sessionId === s.id).length;
+  const isApplying = uiState.applyingSessionId === s.id;
+  const canApply = !!currentUser;
+  const isConfirmed = state.confirmed[s.id];
+
+  return `
+    <div class="session-card ${isApplying ? "selected" : ""}">
+      <div class="session-card-header">
+        <div>
+          <div class="session-card-title">${escapeHtml(s.name)}</div>
+          <div class="session-card-meta">
+            ${s.date || "날짜 미정"} · ${escapeHtml(s.time || "시간 미정")} · ${escapeHtml(s.location || "장소 미정")}
+          </div>
+          <div class="session-card-meta">
+            그룹 ${s.targetGroupSize}명 · 신청 마감 ${s.applyDeadline || "-"} · 현재 ${applicantCount}명 신청
+          </div>
+          ${s.intro ? `<div style="margin-top:8px; font-size:14px;">${escapeHtml(s.intro)}</div>` : ""}
+        </div>
+        <div style="text-align:right;">${sessionStatusTag(s)}</div>
+      </div>
+      <div class="session-card-actions">
+        ${myApp ? `
+          <span class="tag tag-ok">신청함</span>
+          ${!isConfirmed ? `<button class="btn btn-secondary btn-small" onclick="startApplying('${s.id}')">신청 수정</button>` : ""}
+        ` : canApply ? `
+          <button class="btn btn-small" onclick="startApplying('${s.id}')">신청하기</button>
+        ` : `
+          <span style="font-size:13px; color:var(--muted);">먼저 사용자를 선택하세요.</span>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+function startApplying(sessionId) {
+  uiState.applyingSessionId = sessionId;
+  render();
+  setTimeout(() => window.scrollTo({top: document.body.scrollHeight, behavior: "smooth"}), 100);
+}
+
+function cancelApplyingForm() {
+  uiState.applyingSessionId = null;
+  render();
+}
+
+function renderApplicationForm(session, existing) {
   const editing = !!existing;
   return `
     <div class="card">
-      <h3>${editing ? "신청 수정" : "게더링 신청"}</h3>
-      <p class="section-desc">아래 정보를 입력해 게더링에 참가 신청하세요.</p>
+      <div class="card-header">
+        <h3>${escapeHtml(session.name)} — ${editing ? "신청 수정" : "신청"}</h3>
+        <button class="btn-ghost" onclick="cancelApplyingForm()">닫기</button>
+      </div>
 
       <div class="form-row">
         <label>현재 총 경력 연차</label>
@@ -805,12 +940,12 @@ function renderApplicationForm(existing) {
 
       <div class="form-row">
         <label>현재 고민 · 이야기 나누고 싶은 것</label>
-        <textarea id="f-concern" placeholder="예: 팀장으로서 성과 관리와 평가가 어렵다">${existing?.concern || ""}</textarea>
+        <textarea id="f-concern" placeholder="예: 팀장으로서 성과 관리와 평가가 어렵다">${escapeHtml(existing?.concern || "")}</textarea>
       </div>
 
       <div class="form-row">
         <label>공유할 수 있는 경험</label>
-        <textarea id="f-experience" placeholder="예: 스타트업 초기 팀 세팅 경험">${existing?.experience || ""}</textarea>
+        <textarea id="f-experience" placeholder="예: 스타트업 초기 팀 세팅 경험">${escapeHtml(existing?.experience || "")}</textarea>
       </div>
 
       <div class="form-row">
@@ -830,10 +965,11 @@ function renderApplicationForm(existing) {
       </div>
 
       <div style="margin-top: 20px; display:flex; gap:8px;">
-        <button class="btn" onclick="submitApplication(${editing})">
+        <button class="btn" onclick="submitApplication('${session.id}', ${editing})">
           ${editing ? "수정 저장" : "신청 제출"}
         </button>
-        ${editing ? `<button class="btn btn-secondary" onclick="cancelApplication()">신청 취소</button>` : ""}
+        ${editing ? `<button class="btn btn-danger" onclick="cancelApplication('${session.id}')">신청 취소</button>` : ""}
+        <button class="btn btn-secondary" onclick="cancelApplyingForm()">닫기</button>
       </div>
     </div>
   `;
@@ -889,15 +1025,12 @@ function attachFormHandlers() {
     el.addEventListener("click", () => {
       document.querySelectorAll(".radio-card[data-criterion]").forEach(c => c.classList.remove("selected"));
       el.classList.add("selected");
-      const criterion = el.dataset.criterion;
       el.querySelector("input").checked = true;
-      // 기존 응용 필드 재렌더
       const existing = getFormSnapshot();
-      document.getElementById("criterion-fields").innerHTML = renderCriterionFields(criterion, existing);
+      document.getElementById("criterion-fields").innerHTML = renderCriterionFields(el.dataset.criterion, existing);
       attachSubHandlers();
     });
   });
-  // 초기: 이미 선택된 것 있으면
   const checked = document.querySelector("input[name='f-criterion']:checked");
   if (checked) {
     const existing = getFormSnapshot();
@@ -905,7 +1038,6 @@ function attachFormHandlers() {
     attachSubHandlers();
   }
 }
-
 function attachSubHandlers() {
   document.querySelectorAll(".radio-card[data-desired]").forEach(el => {
     el.addEventListener("click", () => {
@@ -915,7 +1047,6 @@ function attachSubHandlers() {
     });
   });
 }
-
 function toggleChip(el, type) {
   if (type === "topic") {
     const selectedCount = document.querySelectorAll('.chip.selected[data-topic]').length;
@@ -926,9 +1057,7 @@ function toggleChip(el, type) {
   }
   el.classList.toggle("selected");
 }
-
 function getFormSnapshot() {
-  // 폼 현재 값을 existing 형태로 (재렌더용)
   const criterion = document.querySelector("input[name='f-criterion']:checked")?.value;
   return {
     criterion,
@@ -938,7 +1067,7 @@ function getFormSnapshot() {
   };
 }
 
-function submitApplication(editing) {
+function submitApplication(sessionId, editing) {
   const user = state.users.find(u => u.id === state.currentUserId);
   if (!user) return alert("사용자를 먼저 선택해주세요.");
 
@@ -953,119 +1082,109 @@ function submitApplication(editing) {
   if (!currentJob) return alert("현재 직무를 선택해주세요.");
   if (!criterion) return alert("매칭 기준을 선택해주세요.");
 
+  const existing = state.applications.find(a => a.userId === user.id && a.sessionId === sessionId);
   const app = {
-    id: editing ? state.applications.find(a => a.userId === user.id).id : "a" + Date.now(),
+    id: existing?.id || genId("a"),
     userId: user.id,
+    sessionId,
     seniority, currentJob, criterion,
     desiredSeniority: document.querySelector("input[name='f-desiredSeniority']:checked")?.value || null,
     desiredJobs: [...document.querySelectorAll('.chip.selected[data-job]')].map(c => c.dataset.job),
     topics: [...document.querySelectorAll('.chip.selected[data-topic]')].map(c => c.dataset.topic),
     concern, experience, disclose,
-    createdAt: editing ? state.applications.find(a => a.userId === user.id).createdAt : new Date().toISOString(),
+    createdAt: existing?.createdAt || new Date().toISOString(),
   };
 
   if (criterion === "seniority" && !app.desiredSeniority) return alert("만나고 싶은 연차를 선택해주세요.");
   if (criterion === "job" && !app.desiredJobs.length) return alert("만나고 싶은 직무를 1개 이상 선택해주세요.");
   if (criterion === "topic" && !app.topics.length) return alert("관심 주제를 1개 이상 선택해주세요.");
 
-  if (editing) {
-    const idx = state.applications.findIndex(a => a.userId === user.id);
+  if (existing) {
+    const idx = state.applications.findIndex(a => a.id === existing.id);
     state.applications[idx] = app;
   } else {
     state.applications.push(app);
   }
-  // 신청이 바뀌면 기존 배정은 초기화
-  state.groups = null;
-  state.confirmed = false;
-  uiState.editing = false;
+  // 이 세션의 배정 초기화
+  delete state.groups[sessionId];
+  delete state.confirmed[sessionId];
+  uiState.applyingSessionId = null;
   saveState();
   render();
   pushApplicationToDrive(app);
 }
 
-function cancelApplication() {
-  if (!confirm("신청을 취소하시겠습니까?")) return;
+function cancelApplication(sessionId) {
+  if (!confirm("이 세션의 신청을 취소하시겠습니까?")) return;
   const user = state.users.find(u => u.id === state.currentUserId);
-  state.applications = state.applications.filter(a => a.userId !== user.id);
-  state.groups = null;
-  state.confirmed = false;
+  state.applications = state.applications.filter(a => !(a.userId === user.id && a.sessionId === sessionId));
+  delete state.groups[sessionId];
+  delete state.confirmed[sessionId];
+  uiState.applyingSessionId = null;
   saveState();
   render();
 }
 
-function renderMyApplication(app) {
+function renderMyApplicationBrief(app) {
+  const session = state.sessions.find(s => s.id === app.sessionId);
+  if (!session) return "";
   const criterionLabel = {seniority:"연차", job:"직무", topic:"주제"}[app.criterion];
-  let detail = "";
-  if (app.criterion === "seniority") {
-    detail = `<div><h4>희망 연차</h4>${SENIORITY_OPTIONS.find(o => o.value === app.desiredSeniority)?.label || "-"}</div>`;
-  } else if (app.criterion === "job") {
-    detail = `<div><h4>만나고 싶은 직무</h4>${app.desiredJobs.join(", ")}</div>`;
-  } else {
-    detail = `<div><h4>관심 주제</h4>${app.topics.join(", ")}</div>`;
-  }
-  const status = state.confirmed ? "그룹 확정" : state.groups ? "임시 배정" : "신청 완료 · 배정 대기";
-  const statusTag = state.confirmed ? "tag-ok" : state.groups ? "tag-warn" : "tag-ok";
-
+  const status = state.confirmed[app.sessionId] ? "그룹 확정" :
+                 state.groups[app.sessionId] ? "임시 배정 중" : "배정 대기";
+  const statusTag = state.confirmed[app.sessionId] ? "tag-ok" :
+                    state.groups[app.sessionId] ? "tag-warn" : "";
   return `
-    <div class="card">
-      <div class="card-header">
-        <h3>내 신청 내역</h3>
-        <span class="tag ${statusTag}">${status}</span>
+    <div class="session-card">
+      <div class="session-card-header">
+        <div>
+          <div class="session-card-title">${escapeHtml(session.name)}</div>
+          <div class="session-card-meta">
+            ${session.date} · ${escapeHtml(session.time)} · ${escapeHtml(session.location)}
+          </div>
+          <div class="session-card-meta">
+            ${app.seniority}년 · ${escapeHtml(app.currentJob)} ·
+            <span class="tag tag-${app.criterion === "seniority" ? "seniority" : app.criterion === "job" ? "job" : "topic"}">${criterionLabel}</span>
+          </div>
+        </div>
+        <div><span class="tag ${statusTag}">${status}</span></div>
       </div>
-      <div class="grid-3">
-        <div><h4>연차</h4>${app.seniority}년</div>
-        <div><h4>현재 직무</h4>${app.currentJob}</div>
-        <div><h4>매칭 기준</h4>${criterionLabel}</div>
-        ${detail}
-        <div style="grid-column: span 2;"><h4>고민</h4>${app.concern || "-"}</div>
-        <div style="grid-column: span 3;"><h4>공유할 경험</h4>${app.experience || "-"}</div>
-        <div style="grid-column: span 3;"><h4>공개 정보</h4>${app.disclose.map(d => `<span class="tag">${d}</span>`).join("")}</div>
-      </div>
-      ${!state.confirmed ? `
-        <hr>
-        <div style="display:flex; gap:8px;">
-          <button class="btn btn-secondary btn-small" onclick="editApplication()">신청 수정</button>
-          <button class="btn btn-secondary btn-small" onclick="cancelApplication()">신청 취소</button>
+      ${!state.confirmed[app.sessionId] ? `
+        <div class="session-card-actions">
+          <button class="btn btn-secondary btn-small" onclick="startApplying('${app.sessionId}')">수정</button>
+          <button class="btn btn-danger btn-small" onclick="cancelApplication('${app.sessionId}')">신청 취소</button>
         </div>
       ` : ""}
     </div>
   `;
 }
 
-function editApplication() {
-  uiState.editing = true;
-  render();
-  window.scrollTo(0, document.body.scrollHeight);
-}
-
 function renderMyGroup(app) {
-  if (!state.groups) return "";
-  const myGroup = state.groups.find(g => g.memberIds.includes(app.id));
+  const session = state.sessions.find(s => s.id === app.sessionId);
+  if (!session) return "";
+  const groups = state.groups[app.sessionId] || [];
+  const myGroup = groups.find(g => g.memberIds.includes(app.id));
   if (!myGroup) {
     return `
       <div class="card">
-        <h3>내 그룹</h3>
+        <h3>${escapeHtml(session.name)} — 내 그룹</h3>
         <div class="banner banner-warn">
           이번에는 그룹에 배정되지 못했습니다. 운영자가 별도로 안내드립니다.
         </div>
       </div>
     `;
   }
-  const s = state.session;
   const members = myGroup.memberIds.map(id => {
     const memApp = state.applications.find(a => a.id === id);
     const memUser = state.users.find(u => u.id === memApp.userId);
     return { app: memApp, user: memUser };
   });
-
   return `
     <div class="card">
-      <h3>내 그룹 · ${myGroup.id}</h3>
-      <p class="section-desc">${s.date} · ${s.time} · ${s.location}</p>
+      <h3>${escapeHtml(session.name)} — 내 그룹 (${myGroup.id})</h3>
+      <p class="section-desc">${session.date} · ${escapeHtml(session.time)} · ${escapeHtml(session.location)}</p>
       <div class="member-list">
         ${members.map(({app: ma, user: mu}) => {
           const isMe = ma.userId === app.userId;
-          const showCompany = ma.disclose.includes("회사");
           const showJob = ma.disclose.includes("직무");
           const showSeniority = ma.disclose.includes("연차");
           const showConcern = ma.disclose.includes("고민");
@@ -1073,7 +1192,7 @@ function renderMyGroup(app) {
           return `
             <div class="member-row" style="${isMe ? "background:#fdf5f5;" : ""}">
               <div class="member-info">
-                <div class="member-name">${mu.name}${isMe ? " (나)" : ""}</div>
+                <div class="member-name">${escapeHtml(mu.name)}${isMe ? " (나)" : ""}</div>
                 <div class="member-meta">
                   ${[
                     showSeniority ? ma.seniority + "년" : null,
@@ -1093,6 +1212,7 @@ function renderMyGroup(app) {
 
 function switchUser(id) {
   state.currentUserId = id || null;
+  uiState.applyingSessionId = null;
   saveState();
   render();
 }
@@ -1102,230 +1222,210 @@ function switchUser(id) {
 // ===========================================================================
 function renderAdminView() {
   const root = document.getElementById("view-admin");
-  const s = state.session;
-  const apps = state.applications;
+  const selectedSession = state.sessions.find(s => s.id === uiState.adminSelectedSessionId);
+
+  let html = `
+    <div class="toolbar">
+      <button class="btn btn-secondary btn-small" onclick="loadSampleData()">샘플 데이터 로드</button>
+      <button class="btn btn-secondary btn-small" onclick="resetState()">전체 초기화</button>
+      <div class="toolbar-spacer"></div>
+      <span style="font-size:13px; color:var(--muted);">세션 ${state.sessions.length}개 · 전체 신청 ${state.applications.length}건</span>
+    </div>
+
+    ${renderSessionListAdmin()}
+    ${renderDriveConfig()}
+  `;
+
+  if (selectedSession) {
+    html += renderSessionPanel(selectedSession);
+  } else if (state.sessions.length) {
+    html += `<div class="card"><div class="empty">위 세션 목록에서 "관리"를 눌러 신청자와 배정을 확인하세요.</div></div>`;
+  }
+
+  root.innerHTML = html;
+}
+
+function renderSessionListAdmin() {
+  return `
+    <div class="card">
+      <div class="card-header">
+        <h3>게더링 세션</h3>
+        <button class="btn btn-small" onclick="createNewSession()">+ 새 게더링</button>
+      </div>
+      ${state.sessions.length === 0
+        ? `<div class="empty">등록된 게더링이 없습니다. "새 게더링" 버튼으로 만드세요.</div>`
+        : state.sessions.map(s => renderAdminSessionCard(s)).join("")}
+    </div>
+  `;
+}
+
+function renderAdminSessionCard(s) {
+  const isEditing = uiState.editingSessionId === s.id;
+  const isSelected = uiState.adminSelectedSessionId === s.id;
+  const appCount = state.applications.filter(a => a.sessionId === s.id).length;
+  const groupCount = (state.groups[s.id] || []).length;
+
+  if (isEditing) return renderSessionEditForm(s);
+
+  return `
+    <div class="session-card ${isSelected ? "selected" : ""}">
+      <div class="session-card-header">
+        <div>
+          <div class="session-card-title">${escapeHtml(s.name)}</div>
+          <div class="session-card-meta">
+            ${s.date || "날짜 미정"} · ${escapeHtml(s.time || "시간 미정")} · ${escapeHtml(s.location || "장소 미정")}
+          </div>
+          <div class="session-card-meta">
+            신청 ${appCount}건 · 그룹 ${groupCount}개 · 목표 ${s.targetGroupSize}명
+          </div>
+        </div>
+        <div>${sessionStatusTag(s)}</div>
+      </div>
+      <div class="session-card-actions">
+        <button class="btn btn-small" onclick="selectAdminSession('${s.id}')">${isSelected ? "관리 중" : "관리"}</button>
+        <button class="btn btn-secondary btn-small" onclick="editSession('${s.id}')">편집</button>
+        <button class="btn btn-danger btn-small" onclick="deleteSession('${s.id}')">삭제</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderSessionEditForm(s) {
+  return `
+    <div class="session-card selected">
+      <h4 style="color: var(--hfk-red); margin-bottom: 12px;">${s.name === "새 게더링" && !s.date ? "새 게더링 만들기" : "게더링 편집"}</h4>
+      <div class="grid-2">
+        <div>
+          <label>게더링명</label>
+          <input id="s-name" value="${escapeAttr(s.name)}">
+        </div>
+        <div>
+          <label>날짜</label>
+          <input id="s-date" type="date" value="${s.date}">
+        </div>
+        <div>
+          <label>시간</label>
+          <input id="s-time" value="${escapeAttr(s.time)}" placeholder="예: 19:00-21:30">
+        </div>
+        <div>
+          <label>장소</label>
+          <input id="s-location" value="${escapeAttr(s.location)}">
+        </div>
+        <div style="grid-column: span 2;">
+          <label>소개</label>
+          <textarea id="s-intro">${escapeHtml(s.intro)}</textarea>
+        </div>
+        <div>
+          <label>그룹 목표 인원</label>
+          <input id="s-target" type="number" min="2" max="20" value="${s.targetGroupSize}">
+        </div>
+        <div>
+          <label>그룹 최소 인원</label>
+          <input id="s-min" type="number" min="2" max="20" value="${s.minGroupSize}">
+        </div>
+        <div>
+          <label>그룹 최대 인원</label>
+          <input id="s-max" type="number" min="2" max="20" value="${s.maxGroupSize}">
+        </div>
+        <div></div>
+        <div>
+          <label>신청 마감일</label>
+          <input id="s-deadline" type="date" value="${s.applyDeadline}">
+        </div>
+        <div>
+          <label>그룹 확정 예정일</label>
+          <input id="s-confirm" type="date" value="${s.confirmDate}">
+        </div>
+      </div>
+      <div style="margin-top:16px; display:flex; gap:8px;">
+        <button class="btn" onclick="saveSessionEdit('${s.id}')">저장</button>
+        <button class="btn btn-secondary" onclick="cancelSessionEdit()">취소</button>
+      </div>
+    </div>
+  `;
+}
+
+function editSession(sessionId) {
+  uiState.editingSessionId = sessionId;
+  render();
+}
+function cancelSessionEdit() {
+  uiState.editingSessionId = null;
+  render();
+}
+function selectAdminSession(sessionId) {
+  uiState.adminSelectedSessionId = sessionId;
+  saveState();
+  render();
+  setTimeout(() => document.getElementById("session-panel")?.scrollIntoView({behavior: "smooth", block: "start"}), 100);
+}
+
+function renderSessionPanel(session) {
+  const apps = state.applications.filter(a => a.sessionId === session.id);
   const byCriterion = {
     seniority: apps.filter(a => a.criterion === "seniority").length,
     job: apps.filter(a => a.criterion === "job").length,
     topic: apps.filter(a => a.criterion === "topic").length,
   };
-  const assignedCount = state.groups ? state.groups.reduce((s, g) => s + g.memberIds.length, 0) : 0;
+  const groups = state.groups[session.id];
+  const assignedCount = groups ? groups.reduce((sum, g) => sum + g.memberIds.length, 0) : 0;
   const unassignedCount = apps.length - assignedCount;
+  const confirmed = state.confirmed[session.id];
 
   let html = `
-    <div class="toolbar">
-      <button class="btn btn-secondary btn-small" onclick="loadSampleData()">샘플 신청자 18명 로드</button>
-      <button class="btn btn-secondary btn-small" onclick="resetState()">전체 초기화</button>
-      <div class="toolbar-spacer"></div>
-      <span style="font-size:13px; color:var(--muted);">세션: ${s.name}</span>
-    </div>
-
-    ${renderSessionEditor()}
-    ${renderDriveConfig()}
-
-    <div class="grid-4">
-      <div class="stat"><div class="stat-label">전체 신청자</div><div class="stat-value">${apps.length}</div></div>
-      <div class="stat"><div class="stat-label">배정 완료</div><div class="stat-value">${state.groups ? assignedCount : "-"}</div></div>
-      <div class="stat"><div class="stat-label">미배정</div><div class="stat-value">${state.groups ? unassignedCount : "-"}</div></div>
-      <div class="stat"><div class="stat-label">그룹 수</div><div class="stat-value">${state.groups ? state.groups.length : "-"}</div></div>
-    </div>
-
-    <div class="card" style="margin-top: 16px;">
+    <div id="session-panel"></div>
+    <div class="card">
       <div class="card-header">
-        <h3>자동 그룹 배정</h3>
-        ${state.confirmed
-          ? '<span class="tag tag-ok">확정됨</span>'
-          : state.groups ? '<span class="tag tag-warn">임시 배정</span>' : ""}
+        <h3>${escapeHtml(session.name)} — 관리</h3>
+        <div style="display:flex; gap:6px; align-items:center;">
+          ${sessionStatusTag(session)}
+          <button class="btn-ghost btn-small" onclick="unselectAdminSession()">닫기</button>
+        </div>
       </div>
-      <div style="font-size:13px; color:var(--muted); margin-bottom:12px;">
-        기준별 신청자: 연차 ${byCriterion.seniority} · 직무 ${byCriterion.job} · 주제 ${byCriterion.topic}
-        &nbsp; | &nbsp;
-        목표 그룹 인원 ${s.targetGroupSize}명 (${s.minGroupSize}~${s.maxGroupSize})
+      <div class="grid-4">
+        <div class="stat"><div class="stat-label">신청자</div><div class="stat-value">${apps.length}</div></div>
+        <div class="stat"><div class="stat-label">배정 완료</div><div class="stat-value">${groups ? assignedCount : "-"}</div></div>
+        <div class="stat"><div class="stat-label">미배정</div><div class="stat-value">${groups ? unassignedCount : "-"}</div></div>
+        <div class="stat"><div class="stat-label">그룹 수</div><div class="stat-value">${groups ? groups.length : "-"}</div></div>
       </div>
-      <div style="display:flex; gap:8px;">
-        <button class="btn" onclick="runAssignment()" ${apps.length < s.minGroupSize ? "disabled" : ""}>
-          ${state.groups ? "재배정" : "자동 배정 실행"}
+      <div style="margin-top:12px; font-size:13px; color:var(--muted);">
+        기준별: 연차 ${byCriterion.seniority} · 직무 ${byCriterion.job} · 주제 ${byCriterion.topic}
+        &nbsp;|&nbsp; 목표 그룹 인원 ${session.targetGroupSize}명 (${session.minGroupSize}~${session.maxGroupSize})
+      </div>
+      <div style="margin-top:12px; display:flex; gap:8px;">
+        <button class="btn" onclick="runAssignment('${session.id}')" ${apps.length < session.minGroupSize ? "disabled" : ""}>
+          ${groups ? "재배정" : "자동 배정 실행"}
         </button>
-        ${state.groups && !state.confirmed ? `
-          <button class="btn" onclick="confirmGroups()" style="background: var(--ok);">그룹 확정 · 결과 공개</button>
+        ${groups && !confirmed ? `
+          <button class="btn" onclick="confirmGroups('${session.id}')" style="background: var(--ok);">그룹 확정 · 결과 공개</button>
         ` : ""}
-        ${state.confirmed ? `
-          <button class="btn btn-secondary" onclick="unconfirmGroups()">확정 해제</button>
+        ${confirmed ? `
+          <button class="btn btn-secondary" onclick="unconfirmGroups('${session.id}')">확정 해제</button>
         ` : ""}
       </div>
     </div>
   `;
 
-  if (state.groups) html += renderGroupsPanel();
-  html += renderApplicantsTable();
-
-  root.innerHTML = html;
+  if (groups) html += renderGroupsPanel(session, apps, groups);
+  html += renderApplicantsTable(session, apps);
+  return html;
 }
 
-function renderSessionEditor() {
-  const s = state.session;
-  const isOpen = uiState.editingSession;
-  return `
-    <div class="card">
-      <div class="card-header">
-        <h3>게더링 정보</h3>
-        <button class="btn btn-secondary btn-small" onclick="toggleSessionEdit()">
-          ${isOpen ? "접기" : "편집"}
-        </button>
-      </div>
-      ${isOpen ? `
-        <div class="grid-2">
-          <div>
-            <label>게더링명</label>
-            <input id="s-name" value="${escapeAttr(s.name)}">
-          </div>
-          <div>
-            <label>날짜</label>
-            <input id="s-date" type="date" value="${s.date}">
-          </div>
-          <div>
-            <label>시간</label>
-            <input id="s-time" value="${escapeAttr(s.time)}" placeholder="예: 19:00-21:30">
-          </div>
-          <div>
-            <label>장소</label>
-            <input id="s-location" value="${escapeAttr(s.location)}">
-          </div>
-          <div style="grid-column: span 2;">
-            <label>소개</label>
-            <textarea id="s-intro">${escapeHtml(s.intro)}</textarea>
-          </div>
-          <div>
-            <label>그룹 목표 인원</label>
-            <input id="s-target" type="number" min="2" max="20" value="${s.targetGroupSize}">
-          </div>
-          <div>
-            <label>그룹 최소 인원</label>
-            <input id="s-min" type="number" min="2" max="20" value="${s.minGroupSize}">
-          </div>
-          <div>
-            <label>그룹 최대 인원</label>
-            <input id="s-max" type="number" min="2" max="20" value="${s.maxGroupSize}">
-          </div>
-          <div></div>
-          <div>
-            <label>신청 마감일</label>
-            <input id="s-deadline" type="date" value="${s.applyDeadline}">
-          </div>
-          <div>
-            <label>그룹 확정 예정일</label>
-            <input id="s-confirm" type="date" value="${s.confirmDate}">
-          </div>
-        </div>
-        <div style="margin-top:16px; display:flex; gap:8px;">
-          <button class="btn" onclick="saveSession()">저장</button>
-          <button class="btn btn-secondary" onclick="toggleSessionEdit()">취소</button>
-        </div>
-      ` : `
-        <div class="grid-4">
-          <div><h4>날짜</h4>${s.date}</div>
-          <div><h4>시간</h4>${s.time}</div>
-          <div><h4>장소</h4>${s.location}</div>
-          <div><h4>그룹 크기</h4>${s.targetGroupSize}명 (${s.minGroupSize}~${s.maxGroupSize})</div>
-        </div>
-        <hr>
-        <div class="grid-3">
-          <div><h4>신청 마감</h4>${s.applyDeadline}</div>
-          <div><h4>확정 예정</h4>${s.confirmDate}</div>
-          <div><h4>소개</h4>${escapeHtml(s.intro)}</div>
-        </div>
-      `}
-    </div>
-  `;
-}
-
-function toggleSessionEdit() {
-  uiState.editingSession = !uiState.editingSession;
+function unselectAdminSession() {
+  uiState.adminSelectedSessionId = null;
   render();
 }
 
-function saveSession() {
-  const target = parseInt(document.getElementById("s-target").value);
-  const min = parseInt(document.getElementById("s-min").value);
-  const max = parseInt(document.getElementById("s-max").value);
-  if (min > target || target > max) {
-    return alert("그룹 크기 관계가 맞지 않습니다.\n최소 ≤ 목표 ≤ 최대 순으로 설정해주세요.");
-  }
-  state.session = {
-    ...state.session,
-    name: document.getElementById("s-name").value.trim() || state.session.name,
-    date: document.getElementById("s-date").value,
-    time: document.getElementById("s-time").value.trim(),
-    location: document.getElementById("s-location").value.trim(),
-    intro: document.getElementById("s-intro").value.trim(),
-    targetGroupSize: target,
-    minGroupSize: min,
-    maxGroupSize: max,
-    applyDeadline: document.getElementById("s-deadline").value,
-    confirmDate: document.getElementById("s-confirm").value,
-  };
-  uiState.editingSession = false;
-  saveState();
-  render();
-  pushSessionToDrive();
-}
-
-function renderDriveConfig() {
-  const d = state.drive;
-  const hasUrl = !!d.webAppUrl;
-  return `
-    <div class="card">
-      <div class="card-header">
-        <h3>Google Drive 연동</h3>
-        <span class="tag ${d.enabled && hasUrl ? "tag-ok" : ""}">${d.enabled && hasUrl ? "활성" : "비활성"}</span>
-      </div>
-      <p class="section-desc">
-        Apps Script Web App URL을 입력하면 신청 내용이 지정된 Google Sheet에 자동 저장됩니다.
-        설치법은 <code>apps-script.gs</code> 파일 상단 주석 참고.
-      </p>
-      <div class="form-row">
-        <label>Web App URL</label>
-        <input id="drive-url" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeAttr(d.webAppUrl)}">
-      </div>
-      <div class="form-row">
-        <label class="inline">
-          <input type="checkbox" id="drive-enabled" ${d.enabled ? "checked" : ""}>
-          신청 시 자동 저장 활성화
-        </label>
-      </div>
-      <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <button class="btn btn-secondary btn-small" onclick="updateDriveConfig()">설정 저장</button>
-        <button id="drive-test-btn" class="btn btn-secondary btn-small" onclick="testDriveConnection()" ${hasUrl ? "" : "disabled"}>연결 테스트</button>
-        <button id="drive-sync-btn" class="btn btn-secondary btn-small" onclick="syncAllToDrive()" ${hasUrl ? "" : "disabled"}>전체 재전송 (${state.applications.length}건)</button>
-      </div>
-      ${d.lastSyncAt ? `
-        <div style="margin-top:12px; font-size:13px; color:var(--muted);">
-          마지막 동기화: ${new Date(d.lastSyncAt).toLocaleString("ko-KR")} · ${d.lastSyncResult || ""}
-        </div>
-      ` : ""}
-    </div>
-  `;
-}
-
-function escapeHtml(s) {
-  if (!s) return "";
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-function escapeAttr(s) {
-  if (!s) return "";
-  return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
-}
-
-function renderGroupsPanel() {
-  const apps = state.applications;
+function renderGroupsPanel(session, apps, groups) {
   const cache = buildScoreCache(apps);
-  const assignedIds = new Set(state.groups.flatMap(g => g.memberIds));
+  const assignedIds = new Set(groups.flatMap(g => g.memberIds));
   const unassigned = apps.filter(a => !assignedIds.has(a.id));
+  const confirmed = state.confirmed[session.id];
 
   return `
     <div class="card">
       <h3>그룹 배정 결과</h3>
-      ${state.groups.map(g => renderGroupCard(g, cache)).join("")}
+      ${groups.map(g => renderGroupCard(session, g, cache, confirmed)).join("")}
       ${unassigned.length ? `
         <hr>
         <h4>미배정 ${unassigned.length}명</h4>
@@ -1335,15 +1435,17 @@ function renderGroupsPanel() {
             return `
               <div class="member-row">
                 <div class="member-info">
-                  <div class="member-name">${u.name}</div>
-                  <div class="member-meta">${a.seniority}년 · ${a.currentJob} · ${criterionLabel(a.criterion)}</div>
+                  <div class="member-name">${escapeHtml(u.name)}</div>
+                  <div class="member-meta">${a.seniority}년 · ${escapeHtml(a.currentJob)} · ${criterionLabel(a.criterion)}</div>
                 </div>
-                <select class="move-select" onchange="moveMember('${a.id}', this.value)">
-                  <option value="">그룹으로 이동...</option>
-                  ${state.groups.filter(g => g.memberIds.length < state.session.maxGroupSize).map(g => `
-                    <option value="${g.id}">${g.id} (현재 ${g.memberIds.length}명)</option>
-                  `).join("")}
-                </select>
+                ${!confirmed ? `
+                  <select class="move-select" onchange="moveMember('${session.id}', '${a.id}', this.value)">
+                    <option value="">그룹으로 이동...</option>
+                    ${groups.filter(g => g.memberIds.length < session.maxGroupSize).map(g => `
+                      <option value="${g.id}">${g.id} (${g.memberIds.length}명)</option>
+                    `).join("")}
+                  </select>
+                ` : ""}
               </div>
             `;
           }).join("")}
@@ -1353,8 +1455,7 @@ function renderGroupsPanel() {
   `;
 }
 
-function renderGroupCard(g, cache) {
-  const s = state.session;
+function renderGroupCard(session, g, cache, confirmed) {
   const members = g.memberIds.map(id => {
     const a = state.applications.find(app => app.id === id);
     const u = state.users.find(user => user.id === a.userId);
@@ -1362,8 +1463,8 @@ function renderGroupCard(g, cache) {
   });
   const metrics = groupMetrics(g, cache);
   let warn = "";
-  if (g.memberIds.length < s.minGroupSize) warn = '<span class="tag tag-warn">정원 미달</span>';
-  else if (g.memberIds.length > s.maxGroupSize) warn = '<span class="tag tag-err">정원 초과</span>';
+  if (g.memberIds.length < session.minGroupSize) warn = '<span class="tag tag-warn">정원 미달</span>';
+  else if (g.memberIds.length > session.maxGroupSize) warn = '<span class="tag tag-err">정원 초과</span>';
 
   return `
     <div class="group-card">
@@ -1381,20 +1482,20 @@ function renderGroupCard(g, cache) {
         ${members.map(({app: a, user: u}) => `
           <div class="member-row">
             <div class="member-info">
-              <div class="member-name">${u.name}
+              <div class="member-name">${escapeHtml(u.name)}
                 <span class="tag tag-${a.criterion === "seniority" ? "seniority" : a.criterion === "job" ? "job" : "topic"}">${criterionLabel(a.criterion)}</span>
               </div>
               <div class="member-meta">
-                ${a.seniority}년 · ${a.currentJob}
+                ${a.seniority}년 · ${escapeHtml(a.currentJob)}
                 ${a.topics.length ? " · 주제: " + a.topics.join(", ") : ""}
-                ${a.concern ? " · 고민: " + a.concern.slice(0, 40) + (a.concern.length > 40 ? "…" : "") : ""}
+                ${a.concern ? " · 고민: " + escapeHtml(a.concern.slice(0, 40)) + (a.concern.length > 40 ? "…" : "") : ""}
               </div>
             </div>
-            ${!state.confirmed ? `
-              <select class="move-select" onchange="moveMember('${a.id}', this.value)">
+            ${!confirmed ? `
+              <select class="move-select" onchange="moveMember('${session.id}', '${a.id}', this.value)">
                 <option value="">이동...</option>
                 <option value="__unassign">미배정으로</option>
-                ${state.groups.filter(og => og.id !== g.id && og.memberIds.length < s.maxGroupSize).map(og => `
+                ${state.groups[session.id].filter(og => og.id !== g.id && og.memberIds.length < session.maxGroupSize).map(og => `
                   <option value="${og.id}">${og.id}</option>
                 `).join("")}
               </select>
@@ -1406,48 +1507,42 @@ function renderGroupCard(g, cache) {
   `;
 }
 
-function renderApplicantsTable() {
-  if (!state.applications.length) return `
+function renderApplicantsTable(session, apps) {
+  if (!apps.length) return `
     <div class="card">
       <h3>신청자</h3>
-      <div class="empty">아직 신청자가 없습니다. 상단에서 샘플 데이터를 로드하거나, 사용자 뷰에서 신청을 받아보세요.</div>
+      <div class="empty">이 세션에 아직 신청자가 없습니다.</div>
     </div>
   `;
-
   return `
     <div class="card">
-      <h3>신청자 목록 (${state.applications.length}명)</h3>
+      <h3>신청자 목록 (${apps.length}명)</h3>
       <div style="overflow-x: auto;">
       <table>
         <thead>
           <tr>
-            <th>이름</th>
-            <th>연차</th>
-            <th>직무</th>
-            <th>기준</th>
-            <th>세부 선호</th>
-            <th>주제 / 고민</th>
-            <th>그룹</th>
+            <th>이름</th><th>연차</th><th>직무</th><th>기준</th>
+            <th>세부 선호</th><th>주제 / 고민</th><th>그룹</th>
           </tr>
         </thead>
         <tbody>
-          ${state.applications.map(a => {
+          ${apps.map(a => {
             const u = state.users.find(u => u.id === a.userId);
-            const group = state.groups?.find(g => g.memberIds.includes(a.id));
+            const group = state.groups[session.id]?.find(g => g.memberIds.includes(a.id));
             let detail = "";
             if (a.criterion === "seniority") detail = SENIORITY_OPTIONS.find(o => o.value === a.desiredSeniority)?.label || "-";
             else if (a.criterion === "job") detail = a.desiredJobs.join(", ");
             else detail = "-";
             return `
               <tr>
-                <td><strong>${u.name}</strong></td>
+                <td><strong>${escapeHtml(u.name)}</strong></td>
                 <td>${a.seniority}년</td>
-                <td>${a.currentJob}</td>
+                <td>${escapeHtml(a.currentJob)}</td>
                 <td><span class="tag tag-${a.criterion === "seniority" ? "seniority" : a.criterion === "job" ? "job" : "topic"}">${criterionLabel(a.criterion)}</span></td>
-                <td style="font-size:13px;">${detail}</td>
+                <td style="font-size:13px;">${escapeHtml(detail)}</td>
                 <td style="font-size:13px; max-width: 260px;">
                   ${a.topics.length ? `<div>${a.topics.join(", ")}</div>` : ""}
-                  ${a.concern ? `<div style="color:var(--muted); margin-top:2px;">${a.concern.slice(0, 50)}${a.concern.length > 50 ? "…" : ""}</div>` : ""}
+                  ${a.concern ? `<div style="color:var(--muted); margin-top:2px;">${escapeHtml(a.concern.slice(0, 50))}${a.concern.length > 50 ? "…" : ""}</div>` : ""}
                 </td>
                 <td>${group ? `<span class="tag">${group.id}</span>` : `<span class="tag tag-warn">미배정</span>`}</td>
               </tr>
@@ -1462,67 +1557,116 @@ function renderApplicantsTable() {
 
 function criterionLabel(c) { return {seniority:"연차", job:"직무", topic:"주제"}[c]; }
 
-function runAssignment() {
-  if (state.confirmed) {
+function runAssignment(sessionId) {
+  const session = state.sessions.find(s => s.id === sessionId);
+  const apps = state.applications.filter(a => a.sessionId === sessionId);
+  if (state.confirmed[sessionId]) {
     if (!confirm("확정된 그룹을 해제하고 다시 배정하시겠습니까?")) return;
-    state.confirmed = false;
+    delete state.confirmed[sessionId];
   }
-  const result = assignSession(state.applications, state.session);
-  state.groups = result.groups;
+  const result = assignSession(apps, session);
+  state.groups[sessionId] = result.groups;
   saveState();
   render();
 }
 
-function moveMember(appId, target) {
+function moveMember(sessionId, appId, target) {
   if (!target) return;
-  // 현재 그룹에서 제거
-  for (const g of state.groups) {
-    g.memberIds = g.memberIds.filter(id => id !== appId);
-  }
-  // 대상에 추가
+  const groups = state.groups[sessionId];
+  if (!groups) return;
+  for (const g of groups) g.memberIds = g.memberIds.filter(id => id !== appId);
   if (target !== "__unassign") {
-    const g = state.groups.find(g => g.id === target);
+    const g = groups.find(g => g.id === target);
     if (g) g.memberIds.push(appId);
   }
-  // 빈 그룹 제거
-  state.groups = state.groups.filter(g => g.memberIds.length > 0);
+  state.groups[sessionId] = groups.filter(g => g.memberIds.length > 0);
   saveState();
   render();
 }
 
-function confirmGroups() {
-  const s = state.session;
+function confirmGroups(sessionId) {
+  const session = state.sessions.find(s => s.id === sessionId);
+  const groups = state.groups[sessionId];
+  const apps = state.applications.filter(a => a.sessionId === sessionId);
   const warnings = [];
-  const smallGroups = state.groups.filter(g => g.memberIds.length < s.minGroupSize);
-  const bigGroups = state.groups.filter(g => g.memberIds.length > s.maxGroupSize);
+  const smallGroups = groups.filter(g => g.memberIds.length < session.minGroupSize);
+  const bigGroups = groups.filter(g => g.memberIds.length > session.maxGroupSize);
   if (smallGroups.length) warnings.push(`정원 미달 그룹 ${smallGroups.length}개`);
   if (bigGroups.length) warnings.push(`정원 초과 그룹 ${bigGroups.length}개`);
-  const assignedIds = new Set(state.groups.flatMap(g => g.memberIds));
-  const unassigned = state.applications.filter(a => !assignedIds.has(a.id));
+  const assignedIds = new Set(groups.flatMap(g => g.memberIds));
+  const unassigned = apps.filter(a => !assignedIds.has(a.id));
   if (unassigned.length) warnings.push(`미배정 ${unassigned.length}명`);
 
   const msg = warnings.length
     ? "다음 항목을 확인해주세요:\n\n" + warnings.map(w => "· " + w).join("\n") + "\n\n그래도 확정하시겠습니까?"
     : "그룹을 확정하고 사용자에게 결과를 공개합니다. 계속하시겠습니까?";
-
   if (!confirm(msg)) return;
-  state.confirmed = true;
+  state.confirmed[sessionId] = true;
   saveState();
   render();
 }
 
-function unconfirmGroups() {
+function unconfirmGroups(sessionId) {
   if (!confirm("확정을 해제합니다. 사용자에게 그룹 결과가 더 이상 보이지 않게 됩니다.")) return;
-  state.confirmed = false;
+  delete state.confirmed[sessionId];
   saveState();
   render();
 }
 
 // ===========================================================================
-// 사용자 · 샘플 데이터
+// Google Drive 카드
+// ===========================================================================
+function renderDriveConfig() {
+  const d = state.drive;
+  const hasUrl = !!d.webAppUrl;
+  return `
+    <div class="card">
+      <div class="card-header">
+        <h3>Google Drive 연동</h3>
+        <span class="tag ${d.enabled && hasUrl ? "tag-ok" : ""}">${d.enabled && hasUrl ? "활성" : "비활성"}</span>
+      </div>
+      <p class="section-desc">
+        Apps Script Web App URL을 입력하면 신청·세션 정보가 Google Sheet에 자동 저장됩니다.
+        설치법은 <code>apps-script.gs</code> 파일 상단 주석 참고.
+      </p>
+      <div class="form-row">
+        <label>Web App URL</label>
+        <input id="drive-url" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeAttr(d.webAppUrl)}">
+      </div>
+      <div class="form-row">
+        <label class="inline">
+          <input type="checkbox" id="drive-enabled" ${d.enabled ? "checked" : ""}>
+          신청 시 자동 저장 활성화
+        </label>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn btn-secondary btn-small" onclick="updateDriveConfig()">설정 저장</button>
+        <button id="drive-test-btn" class="btn btn-secondary btn-small" onclick="testDriveConnection()" ${hasUrl ? "" : "disabled"}>연결 테스트</button>
+        <button id="drive-sync-btn" class="btn btn-secondary btn-small" onclick="syncAllToDrive()" ${hasUrl ? "" : "disabled"}>전체 재전송 (${state.applications.length}건, 세션 ${state.sessions.length}개)</button>
+      </div>
+      ${d.lastSyncAt ? `
+        <div style="margin-top:12px; font-size:13px; color:var(--muted);">
+          마지막 동기화: ${new Date(d.lastSyncAt).toLocaleString("ko-KR")} · ${d.lastSyncResult || ""}
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function escapeAttr(s) {
+  if (s == null) return "";
+  return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+// ===========================================================================
+// 새 사용자 모달 & 샘플 데이터
 // ===========================================================================
 function openNewUserModal() {
-  const html = `
+  document.getElementById("modal-root").innerHTML = `
     <div class="modal-overlay" onclick="closeModal(event)">
       <div class="modal" onclick="event.stopPropagation()">
         <h3>새 사용자 만들기</h3>
@@ -1536,7 +1680,6 @@ function openNewUserModal() {
       </div>
     </div>
   `;
-  document.getElementById("modal-root").innerHTML = html;
   document.getElementById("new-user-name").focus();
 }
 function closeModal(e) {
@@ -1546,7 +1689,7 @@ function closeModal(e) {
 function createUser() {
   const name = document.getElementById("new-user-name").value.trim();
   if (!name) return alert("이름을 입력해주세요.");
-  const id = "u" + Date.now();
+  const id = genId("u");
   state.users.push({ id, name });
   state.currentUserId = id;
   saveState();
@@ -1555,68 +1698,80 @@ function createUser() {
 }
 
 function loadSampleData() {
-  if (state.users.length && !confirm("기존 데이터가 있습니다. 샘플로 덮어쓸까요?")) return;
-  state.users = [];
-  state.applications = [];
-  state.groups = null;
-  state.confirmed = false;
+  if ((state.users.length || state.applications.length || state.sessions.length > 1)
+      && !confirm("기존 데이터가 있습니다. 샘플로 덮어쓸까요?")) return;
+
+  const sessionA = {
+    id: "s_sample_a",
+    name: "2026 여름 저녁 게더링 (성수)",
+    date: "2026-08-15",
+    time: "19:00-21:30",
+    location: "성수동 HFK 라운지",
+    intro: "5명 단위 소그룹으로 저녁 시간을 함께 보내는 세션입니다.",
+    targetGroupSize: 5, minGroupSize: 4, maxGroupSize: 6,
+    applyDeadline: "2026-08-08",
+    confirmDate: "2026-08-11",
+  };
+  const sessionB = {
+    id: "s_sample_b",
+    name: "2026 여름 주말 브런치 게더링 (한남)",
+    date: "2026-08-23",
+    time: "11:00-13:00",
+    location: "한남동 카페 라운지",
+    intro: "주말 브런치와 함께하는 편안한 대화 세션입니다.",
+    targetGroupSize: 4, minGroupSize: 3, maxGroupSize: 5,
+    applyDeadline: "2026-08-16",
+    confirmDate: "2026-08-19",
+  };
 
   const samples = [
-    // 연차 6
-    {name:"김선배", seniority:12, currentJob:"경영기획", criterion:"seniority", desiredSeniority:"similar",
-     concern:"팀 리더로서 성과 관리가 어렵다", experience:"10년간 전략 조직 리드"},
-    {name:"박중견", seniority:11, currentJob:"전략", criterion:"seniority", desiredSeniority:"similar",
-     concern:"시니어 매니저 역할 전환 고민", experience:"컨설팅 인하우스 전환"},
-    {name:"이경력", seniority:8, currentJob:"마케팅", criterion:"seniority", desiredSeniority:"similar",
-     concern:"첫 팀장 역할, 팀원 관리 노하우", experience:"퍼포먼스 마케팅 8년"},
-    {name:"정중반", seniority:7, currentJob:"브랜드", criterion:"seniority", desiredSeniority:"senior",
-     concern:"브랜드 전략 수립 프레임", experience:"B2C 브랜드 리뉴얼 3건"},
-    {name:"최주니어", seniority:4, currentJob:"개발", criterion:"seniority", desiredSeniority:"senior",
-     concern:"시니어 개발자로 성장하는 길", experience:"스타트업 초기 멤버"},
-    {name:"강신입", seniority:3, currentJob:"데이터", criterion:"seniority", desiredSeniority:"senior",
-     concern:"분석가 커리어 방향", experience:"SQL과 대시보드 구축"},
-    // 직무 6
-    {name:"한마케팅", seniority:6, currentJob:"마케팅", criterion:"job", desiredJobs:["브랜드","제품"],
-     concern:"브랜드 마케터로 전환하고 싶다", experience:"퍼포먼스 브랜드 이동 경험"},
-    {name:"윤브랜드", seniority:7, currentJob:"브랜드", criterion:"job", desiredJobs:["마케팅","디자인"],
-     concern:"브랜드 팀 세팅", experience:"브랜드 팀 셋업"},
-    {name:"노기획", seniority:5, currentJob:"서비스 기획", criterion:"job", desiredJobs:["제품","데이터"],
-     concern:"데이터 기반 기획 역량", experience:"B2B SaaS 기획 5년"},
-    {name:"서프로덕트", seniority:8, currentJob:"제품", criterion:"job", desiredJobs:["서비스 기획","개발"],
-     concern:"PM 역할 정의", experience:"PM 리드로 3년"},
-    {name:"임인사", seniority:9, currentJob:"인사", criterion:"job", desiredJobs:["조직문화","경영기획"],
-     concern:"조직문화 개선 사례", experience:"HR BP 5년"},
-    {name:"장문화", seniority:6, currentJob:"조직문화", criterion:"job", desiredJobs:["인사","브랜드"],
-     concern:"문화팀 없이 문화 만들기", experience:"AAR과 회고 워크숍 운영"},
-    // 주제 6
-    {name:"오AI", seniority:5, currentJob:"개발", criterion:"topic", topics:["AI 활용","새로운 사업","기획력"],
-     concern:"AI 프로덕트 기획 실전", experience:"LLM 파이프라인 구축"},
-    {name:"권기획", seniority:7, currentJob:"서비스 기획", criterion:"topic", topics:["AI 활용","기획력","새로운 사업"],
-     concern:"AI 시대 기획자 역할", experience:"AI 기능 릴리즈"},
-    {name:"황리더", seniority:10, currentJob:"경영기획", criterion:"topic", topics:["리더십","팀 관리","조직문화"],
-     concern:"팀장 첫 1년", experience:"10명 팀 리드"},
-    {name:"송매니저", seniority:9, currentJob:"인사", criterion:"topic", topics:["리더십","조직문화"],
-     concern:"MZ 팀원과 시니어의 갈등", experience:"1대1 코칭 도입"},
-    {name:"배창업", seniority:8, currentJob:"창업", criterion:"topic", topics:["독립과 창업","사이드 프로젝트"],
-     concern:"첫 창업 준비", experience:"사이드 프로젝트 2건"},
-    {name:"구프리", seniority:6, currentJob:"디자인", criterion:"topic", topics:["독립과 창업","커리어 전환"],
-     concern:"프리랜서 전환 시점", experience:"프리랜서 3년"},
+    // Session A · 12명
+    ["김선배",12,"경영기획","A","seniority","similar",null,null,"팀 리더로서 성과 관리가 어렵다","10년간 전략 조직 리드"],
+    ["박중견",11,"전략","A","seniority","similar",null,null,"시니어 매니저 역할 전환 고민","컨설팅 인하우스 전환"],
+    ["이경력",8,"마케팅","A","seniority","similar",null,null,"첫 팀장 역할, 팀원 관리","퍼포먼스 마케팅 8년"],
+    ["정중반",7,"브랜드","A","seniority","senior",null,null,"브랜드 전략 프레임","B2C 브랜드 리뉴얼 3건"],
+    ["최주니어",4,"개발","A","seniority","senior",null,null,"시니어 개발자 성장","스타트업 초기 멤버"],
+    ["강신입",3,"데이터","A","seniority","senior",null,null,"분석가 커리어","SQL과 대시보드 구축"],
+    ["한마케팅",6,"마케팅","A","job",null,["브랜드","제품"],null,"브랜드 마케터로 전환","퍼포먼스 브랜드 이동"],
+    ["윤브랜드",7,"브랜드","A","job",null,["마케팅","디자인"],null,"브랜드 팀 세팅","브랜드 팀 셋업"],
+    ["오AI",5,"개발","A","topic",null,null,["AI 활용","새로운 사업","기획력"],"AI 프로덕트 기획","LLM 파이프라인 구축"],
+    ["권기획",7,"서비스 기획","A","topic",null,null,["AI 활용","기획력","새로운 사업"],"AI 시대 기획자 역할","AI 기능 릴리즈"],
+    ["황리더",10,"경영기획","A","topic",null,null,["리더십","팀 관리","조직문화"],"팀장 첫 1년","10명 팀 리드"],
+    ["송매니저",9,"인사","A","topic",null,null,["리더십","조직문화"],"MZ와 시니어 갈등","1:1 코칭 도입"],
+    // Session B · 10명
+    ["배창업",8,"창업","B","topic",null,null,["독립과 창업","사이드 프로젝트"],"첫 창업 준비","사이드 프로젝트 2건"],
+    ["구프리",6,"디자인","B","topic",null,null,["독립과 창업","커리어 전환"],"프리랜서 전환 시점","프리랜서 3년"],
+    ["임인사",9,"인사","B","job",null,["조직문화","경영기획"],null,"조직문화 개선","HR BP 5년"],
+    ["장문화",6,"조직문화","B","job",null,["인사","브랜드"],null,"문화팀 없이 문화 만들기","AAR 워크숍 운영"],
+    ["노기획",5,"서비스 기획","B","job",null,["제품","데이터"],null,"데이터 기반 기획","B2B SaaS 기획 5년"],
+    ["서프로덕트",8,"제품","B","job",null,["서비스 기획","개발"],null,"PM 역할 정의","PM 리드 3년"],
+    ["백데이터",4,"데이터","B","seniority","similar",null,null,"주니어 커리어 조언","프로덕트 분석 3년"],
+    ["나이코",6,"마케팅","B","seniority","similar",null,null,"팀장 준비","콘텐츠 마케팅 6년"],
+    ["문디자인",7,"디자인","B","seniority","similar",null,null,"디자인 시스템 운영","다양한 프로덕트"],
+    ["차창업",5,"창업","B","topic",null,null,["독립과 창업","사이드 프로젝트"],"공동 창업 파트너 찾기","서비스 런칭 2건"],
   ];
 
-  samples.forEach((s, i) => {
+  state.sessions = [sessionA, sessionB];
+  state.users = [];
+  state.applications = [];
+  state.groups = {};
+  state.confirmed = {};
+
+  samples.forEach((row, i) => {
+    const [name, seniority, currentJob, sessionKey, criterion, desiredSeniority, desiredJobs, topics, concern, experience] = row;
     const userId = "u_sample_" + i;
-    state.users.push({ id: userId, name: s.name });
+    state.users.push({ id: userId, name });
     state.applications.push({
       id: "a_sample_" + i,
       userId,
-      seniority: s.seniority,
-      currentJob: s.currentJob,
-      criterion: s.criterion,
-      desiredSeniority: s.desiredSeniority || null,
-      desiredJobs: s.desiredJobs || [],
-      topics: s.topics || [],
-      concern: s.concern,
-      experience: s.experience,
+      sessionId: sessionKey === "A" ? sessionA.id : sessionB.id,
+      seniority,
+      currentJob,
+      criterion,
+      desiredSeniority: desiredSeniority || null,
+      desiredJobs: desiredJobs || [],
+      topics: topics || [],
+      concern, experience,
       disclose: ["회사","직무","연차","고민","관심 주제"],
       createdAt: new Date().toISOString(),
     });

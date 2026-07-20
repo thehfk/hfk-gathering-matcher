@@ -20,7 +20,7 @@ const APPLICATIONS_SHEET = "신청";
 const SESSION_SHEET = "게더링";
 
 const APPLICATION_HEADERS = [
-  "신청 ID", "이름", "연차", "현재 직무", "매칭 기준",
+  "신청 ID", "세션 ID", "세션명", "이름", "연차", "현재 직무", "매칭 기준",
   "희망 연차", "희망 직무", "관심 주제",
   "고민", "공유 경험", "공개 정보",
   "신청 일시", "수신 일시"
@@ -40,7 +40,9 @@ function doPost(e) {
     if (data.type === "application") {
       result = appendApplication(data.payload);
     } else if (data.type === "syncAll") {
-      result = syncAll(data.applications, data.session);
+      // 신규: sessions 배열 지원 (구버전 호환용 session 단일도 처리)
+      const sessions = data.sessions || (data.session ? [data.session] : []);
+      result = syncAll(data.applications, sessions);
     } else if (data.type === "session") {
       result = upsertSession(data.payload);
     } else if (data.type === "ping") {
@@ -87,6 +89,8 @@ function getOrCreateSheet(name, headers) {
 function applicationRow(app) {
   return [
     app.id,
+    app.sessionId || "",
+    app.sessionName || "",
     app.name || "",
     app.seniority,
     app.currentJob || "",
@@ -120,7 +124,7 @@ function appendApplication(app) {
   return { ok: true, action: "appended", id: app.id };
 }
 
-function syncAll(applications, session) {
+function syncAll(applications, sessions) {
   const appSheet = getOrCreateSheet(APPLICATIONS_SHEET, APPLICATION_HEADERS);
   if (appSheet.getLastRow() > 1) {
     appSheet.getRange(2, 1, appSheet.getLastRow() - 1, APPLICATION_HEADERS.length).clearContent();
@@ -130,19 +134,33 @@ function syncAll(applications, session) {
     appSheet.getRange(2, 1, rows.length, APPLICATION_HEADERS.length).setValues(rows);
   }
 
-  let sessionResult = null;
-  if (session) sessionResult = upsertSession(session);
+  const sessionSheet = getOrCreateSheet(SESSION_SHEET, SESSION_HEADERS);
+  if (sessionSheet.getLastRow() > 1) {
+    sessionSheet.getRange(2, 1, sessionSheet.getLastRow() - 1, SESSION_HEADERS.length).clearContent();
+  }
+  if (sessions && sessions.length) {
+    const rows = sessions.map(sessionRow);
+    sessionSheet.getRange(2, 1, rows.length, SESSION_HEADERS.length).setValues(rows);
+  }
 
-  return { ok: true, appCount: applications.length, session: sessionResult };
+  return {
+    ok: true,
+    appCount: applications.length,
+    sessionCount: sessions ? sessions.length : 0
+  };
 }
 
-function upsertSession(session) {
-  const sheet = getOrCreateSheet(SESSION_SHEET, SESSION_HEADERS);
-  const row = [
+function sessionRow(session) {
+  return [
     session.id, session.name, session.date, session.time, session.location,
     session.targetGroupSize, session.minGroupSize, session.maxGroupSize,
     session.applyDeadline, session.confirmDate, new Date().toISOString()
   ];
+}
+
+function upsertSession(session) {
+  const sheet = getOrCreateSheet(SESSION_SHEET, SESSION_HEADERS);
+  const row = sessionRow(session);
   const ids = sheet.getRange(2, 1, Math.max(sheet.getLastRow() - 1, 0), 1).getValues().flat();
   const idx = ids.indexOf(session.id);
   if (idx >= 0) {
