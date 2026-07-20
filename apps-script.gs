@@ -32,7 +32,7 @@ const APPLICATION_HEADERS = [
   "신청 ID", "세션 ID", "세션명", "이름", "이메일", "소속",
   "연차", "현재 직무", "매칭 기준",
   "희망 연차", "희망 직무", "관심 주제",
-  "고민", "공유 경험", "공개 정보",
+  "고민", "공유 경험",
   "신청 일시", "수신 일시"
 ];
 
@@ -137,7 +137,6 @@ function applicationRow(app) {
     (app.topics || []).join(", "),
     app.concern || "",
     app.experience || "",
-    (app.disclose || []).join(", "),
     app.createdAt || "",
     new Date().toISOString()
   ];
@@ -223,8 +222,7 @@ function fetchApplications() {
         topics: splitList(row[11]),
         concern: String(row[12] || ""),
         experience: String(row[13] || ""),
-        disclose: splitList(row[14]),
-        createdAt: row[15] ? toIsoString(row[15]) : ""
+        createdAt: row[14] ? toIsoString(row[14]) : ""
       });
     }
   }

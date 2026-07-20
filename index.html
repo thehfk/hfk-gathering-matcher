@@ -525,7 +525,6 @@ function serializeApp(app) {
     topics: app.topics,
     concern: app.concern,
     experience: app.experience,
-    disclose: app.disclose,
     createdAt: app.createdAt,
   };
 }
@@ -1115,20 +1114,8 @@ function renderApplicationForm(session, existing) {
         <textarea id="f-experience" placeholder="예: 스타트업 초기 팀 세팅 경험">${escapeHtml(existing?.experience || "")}</textarea>
       </div>
 
-      <div class="form-row">
-        <label>공개 정보 (본 그룹 참가자에게)</label>
-        <div>
-          ${["회사","직무","연차","고민","관심 주제"].map(k => `
-            <label class="inline">
-              <input type="checkbox" class="f-disclose" value="${k}"
-                ${(existing?.disclose ?? ["회사","직무","연차","고민","관심 주제"]).includes(k) ? "checked":""}>
-              ${k}
-            </label>
-          `).join("")}
-          <div style="font-size:12px; color:var(--muted); margin-top:6px;">
-            연락처는 기본적으로 비공개입니다.
-          </div>
-        </div>
+      <div style="font-size:12px; color:var(--muted); margin: 12px 0;">
+        위 정보는 그룹이 확정되면 같은 그룹 참가자에게 공개됩니다. 이메일·연락처는 공개되지 않습니다.
       </div>
 
       <div style="margin-top: 20px; display:flex; gap:8px;">
@@ -1243,7 +1230,6 @@ function submitApplication(sessionId, editing) {
   const criterion = document.querySelector("input[name='f-criterion']:checked")?.value;
   const concern = document.getElementById("f-concern").value.trim();
   const experience = document.getElementById("f-experience").value.trim();
-  const disclose = [...document.querySelectorAll(".f-disclose:checked")].map(c => c.value);
 
   if (isNaN(seniority) || seniority < 0) return alert("연차를 정확히 입력해주세요.");
   if (!currentJob) return alert("현재 직무를 선택해주세요.");
@@ -1261,7 +1247,7 @@ function submitApplication(sessionId, editing) {
     desiredSeniority: document.querySelector("input[name='f-desiredSeniority']:checked")?.value || null,
     desiredJobs: [...document.querySelectorAll('.chip.selected[data-job]')].map(c => c.dataset.job),
     topics: [...document.querySelectorAll('.chip.selected[data-topic]')].map(c => c.dataset.topic),
-    concern, experience, disclose,
+    concern, experience,
     createdAt: existing?.createdAt || new Date().toISOString(),
   };
 
@@ -1352,23 +1338,18 @@ function renderMyGroup(app) {
       <div class="member-list">
         ${members.map(ma => {
           const isMe = ma.applicantId === app.applicantId;
-          const showCompany = ma.disclose.includes("회사");
-          const showJob = ma.disclose.includes("직무");
-          const showSeniority = ma.disclose.includes("연차");
-          const showConcern = ma.disclose.includes("고민");
-          const showTopics = ma.disclose.includes("관심 주제");
           return `
             <div class="member-row" style="${isMe ? "background:#fdf5f5;" : ""}">
               <div class="member-info">
                 <div class="member-name">${escapeHtml(ma.applicantName)}${isMe ? " (나)" : ""}</div>
                 <div class="member-meta">
                   ${[
-                    showCompany && ma.applicantCompany ? ma.applicantCompany : null,
-                    showSeniority ? ma.seniority + "년" : null,
-                    showJob ? ma.currentJob : null,
-                    showTopics && ma.topics.length ? "주제: " + ma.topics.join(", ") : null,
-                    showConcern && ma.concern ? "고민: " + ma.concern : null,
-                  ].filter(Boolean).join(" · ") || "정보 비공개"}
+                    ma.applicantCompany || null,
+                    ma.seniority + "년",
+                    ma.currentJob,
+                    ma.topics && ma.topics.length ? "주제: " + ma.topics.join(", ") : null,
+                    ma.concern ? "고민: " + ma.concern : null,
+                  ].filter(Boolean).join(" · ")}
                 </div>
               </div>
             </div>
@@ -1939,7 +1920,7 @@ function exportApplicantsCsv(sessionId) {
   const headers = [
     "이름","이메일","소속","연차","현재 직무","매칭 기준",
     "희망 연차","희망 직무","관심 주제","고민","공유 경험",
-    "공개 정보","그룹","신청 일시"
+    "그룹","신청 일시"
   ];
   const rows = [headers];
   for (const a of apps) {
@@ -1951,7 +1932,6 @@ function exportApplicantsCsv(sessionId) {
       (a.desiredJobs || []).join(", "),
       (a.topics || []).join(", "),
       a.concern, a.experience,
-      (a.disclose || []).join(", "),
       group ? group.id : "미배정",
       a.createdAt,
     ]);
@@ -2076,7 +2056,6 @@ function loadSampleData() {
       desiredJobs: desiredJobs || [],
       topics: topics || [],
       concern, experience,
-      disclose: ["회사","직무","연차","고민","관심 주제"],
       createdAt: new Date().toISOString(),
     });
   });
