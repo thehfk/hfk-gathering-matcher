@@ -455,6 +455,55 @@ function migrate(s) {
 }
 
 function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+
+// ===========================================================================
+// 관리자 PIN 잠금 (클라이언트 게이트)
+// ===========================================================================
+// PIN 해시는 별도 localStorage 키에 저장 (state와 분리, 초기화·마이그레이션 영향 없음)
+// 잠금 해제 상태는 sessionStorage에 저장 → 탭 닫으면 다시 PIN 필요
+const ADMIN_PIN_KEY = "hfk_admin_pin_hash";
+const ADMIN_UNLOCK_KEY = "hfk_admin_unlocked";
+
+async function sha256(text) {
+  const buf = new TextEncoder().encode(text);
+  const hash = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+function adminPinExists() { return !!localStorage.getItem(ADMIN_PIN_KEY); }
+function isAdminUnlocked() { return sessionStorage.getItem(ADMIN_UNLOCK_KEY) === "1"; }
+async function setAdminPin(pin) {
+  localStorage.setItem(ADMIN_PIN_KEY, await sha256(pin));
+  sessionStorage.setItem(ADMIN_UNLOCK_KEY, "1");
+}
+async function verifyAdminPin(pin) {
+  if ((await sha256(pin)) === localStorage.getItem(ADMIN_PIN_KEY)) {
+    sessionStorage.setItem(ADMIN_UNLOCK_KEY, "1");
+    return true;
+  }
+  return false;
+}
+function lockAdmin() {
+  sessionStorage.removeItem(ADMIN_UNLOCK_KEY);
+  render();
+}
+function resetAdminPin() {
+  if (!confirm("관리자 PIN을 초기화합니다. 다음 접근 시 새 PIN을 설정하게 됩니다.")) return;
+  localStorage.removeItem(ADMIN_PIN_KEY);
+  sessionStorage.removeItem(ADMIN_UNLOCK_KEY);
+  render();
+}
+async function changeAdminPin() {
+  const oldPin = prompt("현재 PIN을 입력해주세요.");
+  if (!oldPin) return;
+  if (!(await verifyAdminPin(oldPin))) return alert("현재 PIN이 일치하지 않습니다.");
+  const newPin = prompt("새 PIN (4자 이상)");
+  if (!newPin || newPin.length < 4) return alert("PIN은 4자 이상이어야 합니다.");
+  const confirmPin = prompt("새 PIN 확인");
+  if (newPin !== confirmPin) return alert("두 PIN이 일치하지 않습니다.");
+  await setAdminPin(newPin);
+  alert("PIN이 변경되었습니다.");
+  render();
+}
 function resetState() {
   if (!confirm("모든 데이터를 초기화합니다. 계속하시겠습니까?")) return;
   state = defaultState();
@@ -1341,6 +1390,10 @@ function renderMyGroup(app) {
 // ===========================================================================
 function renderAdminView() {
   const root = document.getElementById("view-admin");
+  if (!isAdminUnlocked()) {
+    root.innerHTML = renderAdminLockScreen();
+    return;
+  }
   const selectedSession = state.sessions.find(s => s.id === uiState.adminSelectedSessionId);
 
   let html = `
@@ -1349,6 +1402,8 @@ function renderAdminView() {
       <button class="btn btn-secondary btn-small" onclick="resetState()">전체 초기화</button>
       <div class="toolbar-spacer"></div>
       <span style="font-size:13px; color:var(--muted);">세션 ${state.sessions.length}개 · 전체 신청 ${state.applications.length}건</span>
+      <button class="btn btn-secondary btn-small" onclick="changeAdminPin()">PIN 변경</button>
+      <button class="btn btn-secondary btn-small" onclick="lockAdmin()">잠금</button>
     </div>
 
     ${renderSessionListAdmin()}
@@ -1532,6 +1587,49 @@ function renderSessionPanel(session) {
 
 function unselectAdminSession() {
   uiState.adminSelectedSessionId = null;
+  render();
+}
+
+function renderAdminLockScreen() {
+  const needsSetup = !adminPinExists();
+  return `
+    <div class="card" style="max-width:420px; margin: 60px auto;">
+      <h3>${needsSetup ? "관리자 PIN 설정" : "관리자 잠금"}</h3>
+      <p class="section-desc">
+        ${needsSetup
+          ? "이 브라우저에서 처음 관리자에 접근합니다. 4자 이상의 PIN을 설정해주세요. PIN 해시만 저장되며, 잊으면 브라우저 저장소를 초기화해야 재설정할 수 있습니다."
+          : "관리자 페이지에 접근하려면 PIN을 입력해주세요."}
+      </p>
+      <div class="form-row">
+        <label>PIN</label>
+        <input type="password" id="admin-pin-1" placeholder="4자 이상" autocomplete="off"
+          onkeydown="if(event.key==='Enter') submitAdminPin()">
+      </div>
+      ${needsSetup ? `
+        <div class="form-row">
+          <label>PIN 확인</label>
+          <input type="password" id="admin-pin-2" placeholder="한 번 더 입력" autocomplete="off"
+            onkeydown="if(event.key==='Enter') submitAdminPin()">
+        </div>
+      ` : ""}
+      <div style="display:flex; gap:8px; margin-top:16px;">
+        <button class="btn" onclick="submitAdminPin()">${needsSetup ? "설정" : "잠금 해제"}</button>
+        ${!needsSetup ? `<button class="btn-ghost btn-small" onclick="resetAdminPin()" style="margin-left:auto;">PIN을 잊었어요</button>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+async function submitAdminPin() {
+  const pin = document.getElementById("admin-pin-1").value;
+  if (!pin || pin.length < 4) return alert("PIN은 4자 이상이어야 합니다.");
+  if (!adminPinExists()) {
+    const confirmPin = document.getElementById("admin-pin-2").value;
+    if (pin !== confirmPin) return alert("두 PIN이 일치하지 않습니다.");
+    await setAdminPin(pin);
+  } else {
+    if (!(await verifyAdminPin(pin))) return alert("PIN이 일치하지 않습니다.");
+  }
   render();
 }
 
