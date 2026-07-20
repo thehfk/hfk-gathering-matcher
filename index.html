@@ -286,7 +286,7 @@
 <body>
 
 <header>
-  <div class="logo">HFK 게더링 <small>· 그룹 매칭 시연</small></div>
+  <div class="logo">HFK 게더링 <small>· 신청 및 그룹 매칭</small></div>
   <div class="nav">
     <button id="nav-user" class="active" onclick="setView('user')">사용자</button>
     <button id="nav-admin" onclick="setView('admin')">관리자</button>
@@ -374,9 +374,8 @@ function defaultState() {
       applyDeadline: "2026-08-08",
       confirmDate: "2026-08-11",
     }],
-    currentUserId: null,
-    users: [],
-    applications: [],       // {id, userId, sessionId, ...}
+    me: null,               // {id, name, email, company} — 이 브라우저 소유자
+    applications: [],       // {id, sessionId, applicantId, applicantName, applicantEmail, applicantCompany, ...}
     groups: {},             // {sessionId: [{id, origin, memberIds}]}
     confirmed: {},          // {sessionId: bool}
     drive: {
@@ -390,10 +389,10 @@ function defaultState() {
 
 let state = loadState();
 let uiState = {
-  editingApplication: null,      // sessionId | null (사용자 신청 폼 편집 모드)
-  applyingSessionId: null,       // 사용자가 신청서 열어둔 세션 id
-  editingSessionId: null,        // 관리자 세션 편집 중인 id ("new" | id | null)
+  applyingSessionId: null,       // 신청 폼 열어둔 세션 id
+  editingSessionId: null,        // 관리자 세션 편집 중인 id
   adminSelectedSessionId: null,  // 관리자가 관리 중인 세션 id
+  editingProfile: false,         // 내 정보 편집 모드
 };
 
 function loadState() {
@@ -424,9 +423,26 @@ function migrate(s) {
     s.confirmed = { [sid]: !!s.confirmed };
     delete s.session;
   }
+  // v2: users[]/currentUserId → v3: me + denormalized applications
+  if (s.users !== undefined && s.me === undefined) {
+    const currentUser = s.users.find(u => u.id === s.currentUserId);
+    s.me = currentUser ? { id: currentUser.id, name: currentUser.name, email: "", company: "" } : null;
+    s.applications = (s.applications || []).map(a => {
+      const u = s.users.find(u => u.id === a.userId);
+      return {
+        ...a,
+        applicantId: a.userId,
+        applicantName: u?.name || "(알 수 없음)",
+        applicantEmail: "",
+        applicantCompany: "",
+      };
+    });
+    delete s.users;
+    delete s.currentUserId;
+  }
   if (!Array.isArray(s.sessions)) s.sessions = [];
   if (!Array.isArray(s.applications)) s.applications = [];
-  if (!Array.isArray(s.users)) s.users = [];
+  if (s.me === undefined) s.me = null;
   if (!s.groups || Array.isArray(s.groups)) s.groups = {};
   if (!s.confirmed || typeof s.confirmed !== "object") s.confirmed = {};
   if (!s.drive) s.drive = defaultState().drive;
@@ -437,7 +453,7 @@ function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 function resetState() {
   if (!confirm("모든 데이터를 초기화합니다. 계속하시겠습니까?")) return;
   state = defaultState();
-  uiState = { editingApplication: null, applyingSessionId: null, editingSessionId: null, adminSelectedSessionId: null };
+  uiState = { applyingSessionId: null, editingSessionId: null, adminSelectedSessionId: null, editingProfile: false };
   saveState();
   render();
 }
@@ -459,13 +475,14 @@ async function postToDrive(payload) {
 }
 
 function serializeApp(app) {
-  const user = state.users.find(u => u.id === app.userId);
   const session = state.sessions.find(s => s.id === app.sessionId);
   return {
     id: app.id,
     sessionId: app.sessionId,
     sessionName: session?.name || "",
-    name: user?.name || "(이름 없음)",
+    name: app.applicantName || "(이름 없음)",
+    email: app.applicantEmail || "",
+    company: app.applicantCompany || "",
     seniority: app.seniority,
     currentJob: app.currentJob,
     criterion: app.criterion,
@@ -782,28 +799,11 @@ function sessionStatusTag(session) {
 // ===========================================================================
 function renderUserView() {
   const root = document.getElementById("view-user");
-  const currentUser = state.users.find(u => u.id === state.currentUserId);
 
-  let html = `
-    <div class="card">
-      <label>테스트 사용자 (데모용 로그인 시뮬레이션)</label>
-      <div style="display:flex; gap:8px; align-items:flex-end;">
-        <select id="user-select" onchange="switchUser(this.value)" style="flex:1;">
-          <option value="">— 사용자 선택 —</option>
-          ${state.users.map(u => {
-            const appCount = state.applications.filter(a => a.userId === u.id).length;
-            return `<option value="${u.id}" ${u.id === state.currentUserId ? "selected":""}>
-              ${escapeHtml(u.name)}${appCount ? ` (신청 ${appCount}건)` : ""}
-            </option>`;
-          }).join("")}
-        </select>
-        <button class="btn btn-secondary btn-small" onclick="openNewUserModal()">+ 새 사용자</button>
-      </div>
-    </div>
-  `;
+  let html = renderProfileCard();
 
   if (!state.sessions.length) {
-    html += `<div class="empty">현재 등록된 게더링이 없습니다.<br>관리자 뷰에서 게더링을 생성해주세요.</div>`;
+    html += `<div class="empty">현재 등록된 게더링이 없습니다.<br>관리자가 게더링을 등록하면 표시됩니다.</div>`;
     root.innerHTML = html;
     return;
   }
@@ -812,30 +812,28 @@ function renderUserView() {
   html += `<div class="card"><h3>게더링 목록</h3>
     <p class="section-desc">참가하고 싶은 게더링을 선택해 신청하세요.</p>`;
   for (const s of state.sessions) {
-    html += renderUserSessionCard(s, currentUser);
+    html += renderUserSessionCard(s);
   }
   html += `</div>`;
 
   // 현재 신청 폼이 열려있는 세션
-  if (currentUser && uiState.applyingSessionId) {
+  if (state.me && uiState.applyingSessionId) {
     const targetSession = state.sessions.find(s => s.id === uiState.applyingSessionId);
     if (targetSession) {
-      const existing = state.applications.find(a => a.userId === currentUser.id && a.sessionId === targetSession.id);
+      const existing = state.applications.find(a => a.applicantId === state.me.id && a.sessionId === targetSession.id);
       html += renderApplicationForm(targetSession, existing);
     }
   }
 
   // 내 신청 내역
-  if (currentUser) {
-    const myApps = state.applications.filter(a => a.userId === currentUser.id);
+  if (state.me) {
+    const myApps = state.applications.filter(a => a.applicantId === state.me.id);
     if (myApps.length) {
       html += `<div class="card"><h3>내 신청 내역</h3>`;
       for (const app of myApps) {
         html += renderMyApplicationBrief(app);
       }
       html += `</div>`;
-
-      // 확정된 그룹 결과
       for (const app of myApps) {
         if (state.confirmed[app.sessionId] && state.groups[app.sessionId]) {
           html += renderMyGroup(app);
@@ -848,12 +846,89 @@ function renderUserView() {
   attachFormHandlers();
 }
 
-function renderUserSessionCard(session, currentUser) {
+function renderProfileCard() {
+  const me = state.me;
+  const editing = uiState.editingProfile || !me;
+  if (editing) {
+    return `
+      <div class="card">
+        <h3>${me ? "내 정보 편집" : "내 정보 등록"}</h3>
+        <p class="section-desc">${me ? "" : "게더링에 신청하려면 먼저 정보를 입력해주세요. 이 브라우저에만 저장됩니다."}</p>
+        <div class="grid-2">
+          <div>
+            <label>이름 *</label>
+            <input id="p-name" value="${escapeAttr(me?.name || "")}" placeholder="예: 김하늘">
+          </div>
+          <div>
+            <label>이메일 *</label>
+            <input id="p-email" type="email" value="${escapeAttr(me?.email || "")}" placeholder="예: name@example.com">
+          </div>
+          <div style="grid-column: span 2;">
+            <label>소속 회사</label>
+            <input id="p-company" value="${escapeAttr(me?.company || "")}" placeholder="예: HFK">
+          </div>
+        </div>
+        <div style="margin-top:16px; display:flex; gap:8px;">
+          <button class="btn" onclick="saveProfile()">저장</button>
+          ${me ? `<button class="btn btn-secondary" onclick="cancelProfileEdit()">취소</button>` : ""}
+        </div>
+      </div>
+    `;
+  }
+  return `
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div style="font-size:15px; font-weight:600;">${escapeHtml(me.name)}</div>
+          <div style="font-size:13px; color:var(--muted); margin-top:4px;">
+            ${escapeHtml(me.email)}${me.company ? " · " + escapeHtml(me.company) : ""}
+          </div>
+        </div>
+        <button class="btn btn-secondary btn-small" onclick="editProfile()">정보 수정</button>
+      </div>
+    </div>
+  `;
+}
+
+function editProfile() {
+  uiState.editingProfile = true;
+  render();
+}
+function cancelProfileEdit() {
+  uiState.editingProfile = false;
+  render();
+}
+function saveProfile() {
+  const name = document.getElementById("p-name").value.trim();
+  const email = document.getElementById("p-email").value.trim();
+  const company = document.getElementById("p-company").value.trim();
+  if (!name) return alert("이름을 입력해주세요.");
+  if (!email || !email.includes("@")) return alert("이메일을 정확히 입력해주세요.");
+  const isNew = !state.me;
+  state.me = {
+    id: isNew ? genId("u") : state.me.id,
+    name, email, company,
+  };
+  // 이 사용자의 기존 신청서 denormalized 필드 갱신
+  state.applications.forEach(a => {
+    if (a.applicantId === state.me.id) {
+      a.applicantName = name;
+      a.applicantEmail = email;
+      a.applicantCompany = company;
+    }
+  });
+  uiState.editingProfile = false;
+  saveState();
+  render();
+}
+
+function renderUserSessionCard(session) {
   const s = session;
-  const myApp = currentUser && state.applications.find(a => a.userId === currentUser.id && a.sessionId === s.id);
+  const me = state.me;
+  const myApp = me && state.applications.find(a => a.applicantId === me.id && a.sessionId === s.id);
   const applicantCount = state.applications.filter(a => a.sessionId === s.id).length;
   const isApplying = uiState.applyingSessionId === s.id;
-  const canApply = !!currentUser;
+  const canApply = !!me;
   const isConfirmed = state.confirmed[s.id];
 
   return `
@@ -878,7 +953,7 @@ function renderUserSessionCard(session, currentUser) {
         ` : canApply ? `
           <button class="btn btn-small" onclick="startApplying('${s.id}')">신청하기</button>
         ` : `
-          <span style="font-size:13px; color:var(--muted);">먼저 사용자를 선택하세요.</span>
+          <span style="font-size:13px; color:var(--muted);">먼저 내 정보를 등록하세요.</span>
         `}
       </div>
     </div>
@@ -1068,8 +1143,8 @@ function getFormSnapshot() {
 }
 
 function submitApplication(sessionId, editing) {
-  const user = state.users.find(u => u.id === state.currentUserId);
-  if (!user) return alert("사용자를 먼저 선택해주세요.");
+  const me = state.me;
+  if (!me) return alert("먼저 내 정보를 등록해주세요.");
 
   const seniority = parseInt(document.getElementById("f-seniority").value);
   const currentJob = document.getElementById("f-currentJob").value;
@@ -1082,11 +1157,14 @@ function submitApplication(sessionId, editing) {
   if (!currentJob) return alert("현재 직무를 선택해주세요.");
   if (!criterion) return alert("매칭 기준을 선택해주세요.");
 
-  const existing = state.applications.find(a => a.userId === user.id && a.sessionId === sessionId);
+  const existing = state.applications.find(a => a.applicantId === me.id && a.sessionId === sessionId);
   const app = {
     id: existing?.id || genId("a"),
-    userId: user.id,
     sessionId,
+    applicantId: me.id,
+    applicantName: me.name,
+    applicantEmail: me.email,
+    applicantCompany: me.company,
     seniority, currentJob, criterion,
     desiredSeniority: document.querySelector("input[name='f-desiredSeniority']:checked")?.value || null,
     desiredJobs: [...document.querySelectorAll('.chip.selected[data-job]')].map(c => c.dataset.job),
@@ -1116,8 +1194,9 @@ function submitApplication(sessionId, editing) {
 
 function cancelApplication(sessionId) {
   if (!confirm("이 세션의 신청을 취소하시겠습니까?")) return;
-  const user = state.users.find(u => u.id === state.currentUserId);
-  state.applications = state.applications.filter(a => !(a.userId === user.id && a.sessionId === sessionId));
+  const me = state.me;
+  if (!me) return;
+  state.applications = state.applications.filter(a => !(a.applicantId === me.id && a.sessionId === sessionId));
   delete state.groups[sessionId];
   delete state.confirmed[sessionId];
   uiState.applyingSessionId = null;
@@ -1173,18 +1252,15 @@ function renderMyGroup(app) {
       </div>
     `;
   }
-  const members = myGroup.memberIds.map(id => {
-    const memApp = state.applications.find(a => a.id === id);
-    const memUser = state.users.find(u => u.id === memApp.userId);
-    return { app: memApp, user: memUser };
-  });
+  const members = myGroup.memberIds.map(id => state.applications.find(a => a.id === id)).filter(Boolean);
   return `
     <div class="card">
       <h3>${escapeHtml(session.name)} — 내 그룹 (${myGroup.id})</h3>
       <p class="section-desc">${session.date} · ${escapeHtml(session.time)} · ${escapeHtml(session.location)}</p>
       <div class="member-list">
-        ${members.map(({app: ma, user: mu}) => {
-          const isMe = ma.userId === app.userId;
+        ${members.map(ma => {
+          const isMe = ma.applicantId === app.applicantId;
+          const showCompany = ma.disclose.includes("회사");
           const showJob = ma.disclose.includes("직무");
           const showSeniority = ma.disclose.includes("연차");
           const showConcern = ma.disclose.includes("고민");
@@ -1192,9 +1268,10 @@ function renderMyGroup(app) {
           return `
             <div class="member-row" style="${isMe ? "background:#fdf5f5;" : ""}">
               <div class="member-info">
-                <div class="member-name">${escapeHtml(mu.name)}${isMe ? " (나)" : ""}</div>
+                <div class="member-name">${escapeHtml(ma.applicantName)}${isMe ? " (나)" : ""}</div>
                 <div class="member-meta">
                   ${[
+                    showCompany && ma.applicantCompany ? ma.applicantCompany : null,
                     showSeniority ? ma.seniority + "년" : null,
                     showJob ? ma.currentJob : null,
                     showTopics && ma.topics.length ? "주제: " + ma.topics.join(", ") : null,
@@ -1210,13 +1287,6 @@ function renderMyGroup(app) {
   `;
 }
 
-function switchUser(id) {
-  state.currentUserId = id || null;
-  uiState.applyingSessionId = null;
-  saveState();
-  render();
-}
-
 // ===========================================================================
 // 렌더링 — 관리자 뷰
 // ===========================================================================
@@ -1226,7 +1296,7 @@ function renderAdminView() {
 
   let html = `
     <div class="toolbar">
-      <button class="btn btn-secondary btn-small" onclick="loadSampleData()">샘플 데이터 로드</button>
+      <button class="btn btn-secondary btn-small" onclick="loadSampleData()">테스트용 샘플 로드</button>
       <button class="btn btn-secondary btn-small" onclick="resetState()">전체 초기화</button>
       <div class="toolbar-spacer"></div>
       <span style="font-size:13px; color:var(--muted);">세션 ${state.sessions.length}개 · 전체 신청 ${state.applications.length}건</span>
@@ -1431,11 +1501,10 @@ function renderGroupsPanel(session, apps, groups) {
         <h4>미배정 ${unassigned.length}명</h4>
         <div class="member-list">
           ${unassigned.map(a => {
-            const u = state.users.find(u => u.id === a.userId);
             return `
               <div class="member-row">
                 <div class="member-info">
-                  <div class="member-name">${escapeHtml(u.name)}</div>
+                  <div class="member-name">${escapeHtml(a.applicantName)}</div>
                   <div class="member-meta">${a.seniority}년 · ${escapeHtml(a.currentJob)} · ${criterionLabel(a.criterion)}</div>
                 </div>
                 ${!confirmed ? `
@@ -1456,11 +1525,7 @@ function renderGroupsPanel(session, apps, groups) {
 }
 
 function renderGroupCard(session, g, cache, confirmed) {
-  const members = g.memberIds.map(id => {
-    const a = state.applications.find(app => app.id === id);
-    const u = state.users.find(user => user.id === a.userId);
-    return { app: a, user: u };
-  });
+  const members = g.memberIds.map(id => state.applications.find(app => app.id === id)).filter(Boolean);
   const metrics = groupMetrics(g, cache);
   let warn = "";
   if (g.memberIds.length < session.minGroupSize) warn = '<span class="tag tag-warn">정원 미달</span>';
@@ -1479,14 +1544,14 @@ function renderGroupCard(session, g, cache, confirmed) {
         </div>
       </div>
       <div class="member-list">
-        ${members.map(({app: a, user: u}) => `
+        ${members.map(a => `
           <div class="member-row">
             <div class="member-info">
-              <div class="member-name">${escapeHtml(u.name)}
+              <div class="member-name">${escapeHtml(a.applicantName)}
                 <span class="tag tag-${a.criterion === "seniority" ? "seniority" : a.criterion === "job" ? "job" : "topic"}">${criterionLabel(a.criterion)}</span>
               </div>
               <div class="member-meta">
-                ${a.seniority}년 · ${escapeHtml(a.currentJob)}
+                ${a.applicantCompany ? escapeHtml(a.applicantCompany) + " · " : ""}${a.seniority}년 · ${escapeHtml(a.currentJob)}
                 ${a.topics.length ? " · 주제: " + a.topics.join(", ") : ""}
                 ${a.concern ? " · 고민: " + escapeHtml(a.concern.slice(0, 40)) + (a.concern.length > 40 ? "…" : "") : ""}
               </div>
@@ -1521,13 +1586,12 @@ function renderApplicantsTable(session, apps) {
       <table>
         <thead>
           <tr>
-            <th>이름</th><th>연차</th><th>직무</th><th>기준</th>
+            <th>이름</th><th>소속</th><th>연차</th><th>직무</th><th>기준</th>
             <th>세부 선호</th><th>주제 / 고민</th><th>그룹</th>
           </tr>
         </thead>
         <tbody>
           ${apps.map(a => {
-            const u = state.users.find(u => u.id === a.userId);
             const group = state.groups[session.id]?.find(g => g.memberIds.includes(a.id));
             let detail = "";
             if (a.criterion === "seniority") detail = SENIORITY_OPTIONS.find(o => o.value === a.desiredSeniority)?.label || "-";
@@ -1535,7 +1599,8 @@ function renderApplicantsTable(session, apps) {
             else detail = "-";
             return `
               <tr>
-                <td><strong>${escapeHtml(u.name)}</strong></td>
+                <td><strong>${escapeHtml(a.applicantName)}</strong>${a.applicantEmail ? `<div style="font-size:12px;color:var(--muted);">${escapeHtml(a.applicantEmail)}</div>` : ""}</td>
+                <td>${escapeHtml(a.applicantCompany || "-")}</td>
                 <td>${a.seniority}년</td>
                 <td>${escapeHtml(a.currentJob)}</td>
                 <td><span class="tag tag-${a.criterion === "seniority" ? "seniority" : a.criterion === "job" ? "job" : "topic"}">${criterionLabel(a.criterion)}</span></td>
@@ -1663,43 +1728,11 @@ function escapeAttr(s) {
 }
 
 // ===========================================================================
-// 새 사용자 모달 & 샘플 데이터
+// 샘플 데이터 (관리자용 · 알고리즘 테스트)
 // ===========================================================================
-function openNewUserModal() {
-  document.getElementById("modal-root").innerHTML = `
-    <div class="modal-overlay" onclick="closeModal(event)">
-      <div class="modal" onclick="event.stopPropagation()">
-        <h3>새 사용자 만들기</h3>
-        <p class="section-desc">실제 서비스에서는 HFK 회원 로그인으로 자동 인식됩니다.</p>
-        <label>이름</label>
-        <input type="text" id="new-user-name" placeholder="예: 김하늘" onkeydown="if(event.key==='Enter') createUser()">
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal()">취소</button>
-          <button class="btn" onclick="createUser()">만들기</button>
-        </div>
-      </div>
-    </div>
-  `;
-  document.getElementById("new-user-name").focus();
-}
-function closeModal(e) {
-  if (e && e.target !== e.currentTarget) return;
-  document.getElementById("modal-root").innerHTML = "";
-}
-function createUser() {
-  const name = document.getElementById("new-user-name").value.trim();
-  if (!name) return alert("이름을 입력해주세요.");
-  const id = genId("u");
-  state.users.push({ id, name });
-  state.currentUserId = id;
-  saveState();
-  closeModal();
-  render();
-}
-
 function loadSampleData() {
-  if ((state.users.length || state.applications.length || state.sessions.length > 1)
-      && !confirm("기존 데이터가 있습니다. 샘플로 덮어쓸까요?")) return;
+  if ((state.applications.length || state.sessions.length > 1)
+      && !confirm("기존 신청·세션 데이터를 샘플로 덮어씁니다. 계속하시겠습니까?\n(내 정보는 유지됩니다)")) return;
 
   const sessionA = {
     id: "s_sample_a",
@@ -1752,19 +1785,19 @@ function loadSampleData() {
   ];
 
   state.sessions = [sessionA, sessionB];
-  state.users = [];
   state.applications = [];
   state.groups = {};
   state.confirmed = {};
 
   samples.forEach((row, i) => {
     const [name, seniority, currentJob, sessionKey, criterion, desiredSeniority, desiredJobs, topics, concern, experience] = row;
-    const userId = "u_sample_" + i;
-    state.users.push({ id: userId, name });
     state.applications.push({
       id: "a_sample_" + i,
-      userId,
       sessionId: sessionKey === "A" ? sessionA.id : sessionB.id,
+      applicantId: "u_sample_" + i,
+      applicantName: name,
+      applicantEmail: "",
+      applicantCompany: "",
       seniority,
       currentJob,
       criterion,
