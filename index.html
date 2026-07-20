@@ -393,6 +393,11 @@ let uiState = {
   editingSessionId: null,        // 관리자 세션 편집 중인 id
   adminSelectedSessionId: null,  // 관리자가 관리 중인 세션 id
   editingProfile: false,         // 내 정보 편집 모드
+  filter: {                      // 신청자 검색/필터
+    keyword: "",
+    criterion: "all",            // all/seniority/job/topic
+    groupStatus: "all",          // all/assigned/unassigned
+  },
 };
 
 function loadState() {
@@ -542,6 +547,50 @@ async function syncAllToDrive() {
     saveState();
     render();
     alert("전송 실패: " + e.message);
+  }
+}
+
+async function fetchFromDrive() {
+  const btn = document.getElementById("drive-fetch-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "가져오는 중..."; }
+  try {
+    const result = await postToDrive({ type: "fetchApplications" });
+    if (!result.ok) throw new Error(result.error || "실패");
+
+    const fetchedApps = result.applications || [];
+    const fetchedSessions = result.sessions || [];
+
+    // 세션 병합: 시트가 정본, 로컬 intro는 보존
+    if (fetchedSessions.length) {
+      const merged = fetchedSessions.map(fs => {
+        const local = state.sessions.find(ls => ls.id === fs.id);
+        return { ...fs, intro: local?.intro || "" };
+      });
+      const fetchedIds = new Set(fetchedSessions.map(s => s.id));
+      const localOnly = state.sessions.filter(s => !fetchedIds.has(s.id));
+      state.sessions = [...merged, ...localOnly];
+    }
+
+    // 신청 병합: ID 기준으로 시트값 우선, 로컬만 있는 건 유지
+    const fetchedIds = new Set(fetchedApps.map(a => a.id));
+    const localOnly = state.applications.filter(a => !fetchedIds.has(a.id));
+    // 시트에서 받은 apps는 applicantId를 sheet-origin으로 지정
+    const normalized = fetchedApps.map(a => ({
+      ...a,
+      applicantId: a.applicantId || ("sheet_" + a.id),
+    }));
+    state.applications = [...normalized, ...localOnly];
+
+    state.drive.lastSyncAt = new Date().toISOString();
+    state.drive.lastSyncResult = `가져옴: 신청 ${fetchedApps.length}건 · 세션 ${fetchedSessions.length}개`;
+    saveState();
+    render();
+    alert(state.drive.lastSyncResult);
+  } catch (e) {
+    state.drive.lastSyncResult = "가져오기 실패: " + e.message;
+    saveState();
+    render();
+    alert("가져오기 실패: " + e.message);
   }
 }
 
@@ -1573,51 +1622,108 @@ function renderGroupCard(session, g, cache, confirmed) {
 }
 
 function renderApplicantsTable(session, apps) {
-  if (!apps.length) return `
-    <div class="card">
-      <h3>신청자</h3>
-      <div class="empty">이 세션에 아직 신청자가 없습니다.</div>
-    </div>
-  `;
+  const f = uiState.filter;
+  const filtered = filterApplicants(apps, session);
+  const hasFilter = f.keyword || f.criterion !== "all" || f.groupStatus !== "all";
+
   return `
     <div class="card">
-      <h3>신청자 목록 (${apps.length}명)</h3>
-      <div style="overflow-x: auto;">
-      <table>
-        <thead>
-          <tr>
-            <th>이름</th><th>소속</th><th>연차</th><th>직무</th><th>기준</th>
-            <th>세부 선호</th><th>주제 / 고민</th><th>그룹</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${apps.map(a => {
-            const group = state.groups[session.id]?.find(g => g.memberIds.includes(a.id));
-            let detail = "";
-            if (a.criterion === "seniority") detail = SENIORITY_OPTIONS.find(o => o.value === a.desiredSeniority)?.label || "-";
-            else if (a.criterion === "job") detail = a.desiredJobs.join(", ");
-            else detail = "-";
-            return `
-              <tr>
-                <td><strong>${escapeHtml(a.applicantName)}</strong>${a.applicantEmail ? `<div style="font-size:12px;color:var(--muted);">${escapeHtml(a.applicantEmail)}</div>` : ""}</td>
-                <td>${escapeHtml(a.applicantCompany || "-")}</td>
-                <td>${a.seniority}년</td>
-                <td>${escapeHtml(a.currentJob)}</td>
-                <td><span class="tag tag-${a.criterion === "seniority" ? "seniority" : a.criterion === "job" ? "job" : "topic"}">${criterionLabel(a.criterion)}</span></td>
-                <td style="font-size:13px;">${escapeHtml(detail)}</td>
-                <td style="font-size:13px; max-width: 260px;">
-                  ${a.topics.length ? `<div>${a.topics.join(", ")}</div>` : ""}
-                  ${a.concern ? `<div style="color:var(--muted); margin-top:2px;">${escapeHtml(a.concern.slice(0, 50))}${a.concern.length > 50 ? "…" : ""}</div>` : ""}
-                </td>
-                <td>${group ? `<span class="tag">${group.id}</span>` : `<span class="tag tag-warn">미배정</span>`}</td>
-              </tr>
-            `;
-          }).join("")}
-        </tbody>
-      </table>
+      <div class="card-header">
+        <h3>신청자 목록 <span style="font-weight:400; color:var(--muted); font-size:14px;">(${filtered.length}${filtered.length !== apps.length ? " / " + apps.length : ""}명)</span></h3>
+        <div style="display:flex; gap:6px;">
+          <button class="btn btn-secondary btn-small" onclick="exportApplicantsCsv('${session.id}')" ${apps.length ? "" : "disabled"}>CSV 내보내기</button>
+          ${state.groups[session.id]?.length ? `<button class="btn btn-secondary btn-small" onclick="exportGroupsCsv('${session.id}')">그룹 결과 CSV</button>` : ""}
+        </div>
       </div>
+
+      <div class="grid-3" style="margin-bottom: 12px;">
+        <input type="text" placeholder="이름·이메일·소속·직무·고민 검색"
+          value="${escapeAttr(f.keyword)}"
+          oninput="setFilter('keyword', this.value)">
+        <select onchange="setFilter('criterion', this.value)">
+          <option value="all" ${f.criterion === "all" ? "selected" : ""}>전체 기준</option>
+          <option value="seniority" ${f.criterion === "seniority" ? "selected" : ""}>연차</option>
+          <option value="job" ${f.criterion === "job" ? "selected" : ""}>직무</option>
+          <option value="topic" ${f.criterion === "topic" ? "selected" : ""}>주제</option>
+        </select>
+        <select onchange="setFilter('groupStatus', this.value)">
+          <option value="all" ${f.groupStatus === "all" ? "selected" : ""}>전체 배정 상태</option>
+          <option value="assigned" ${f.groupStatus === "assigned" ? "selected" : ""}>배정됨</option>
+          <option value="unassigned" ${f.groupStatus === "unassigned" ? "selected" : ""}>미배정</option>
+        </select>
+      </div>
+      ${hasFilter ? `<div style="margin-bottom:10px;"><button class="btn-ghost btn-small" onclick="clearFilter()">필터 초기화</button></div>` : ""}
+
+      ${filtered.length === 0 ? `<div class="empty">${apps.length ? "필터 조건에 해당하는 신청자가 없습니다." : "이 세션에 아직 신청자가 없습니다."}</div>` : `
+        <div style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>이름</th><th>소속</th><th>연차</th><th>직무</th><th>기준</th>
+              <th>세부 선호</th><th>주제 / 고민</th><th>그룹</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filtered.map(a => renderApplicantRow(a, session)).join("")}
+          </tbody>
+        </table>
+        </div>
+      `}
     </div>
   `;
+}
+
+function renderApplicantRow(a, session) {
+  const group = state.groups[session.id]?.find(g => g.memberIds.includes(a.id));
+  let detail = "";
+  if (a.criterion === "seniority") detail = SENIORITY_OPTIONS.find(o => o.value === a.desiredSeniority)?.label || "-";
+  else if (a.criterion === "job") detail = a.desiredJobs.join(", ");
+  else detail = "-";
+  return `
+    <tr>
+      <td><strong>${escapeHtml(a.applicantName)}</strong>${a.applicantEmail ? `<div style="font-size:12px;color:var(--muted);">${escapeHtml(a.applicantEmail)}</div>` : ""}</td>
+      <td>${escapeHtml(a.applicantCompany || "-")}</td>
+      <td>${a.seniority}년</td>
+      <td>${escapeHtml(a.currentJob)}</td>
+      <td><span class="tag tag-${a.criterion === "seniority" ? "seniority" : a.criterion === "job" ? "job" : "topic"}">${criterionLabel(a.criterion)}</span></td>
+      <td style="font-size:13px;">${escapeHtml(detail)}</td>
+      <td style="font-size:13px; max-width: 260px;">
+        ${a.topics.length ? `<div>${a.topics.join(", ")}</div>` : ""}
+        ${a.concern ? `<div style="color:var(--muted); margin-top:2px;">${escapeHtml(a.concern.slice(0, 50))}${a.concern.length > 50 ? "…" : ""}</div>` : ""}
+      </td>
+      <td>${group ? `<span class="tag">${group.id}</span>` : `<span class="tag tag-warn">미배정</span>`}</td>
+    </tr>
+  `;
+}
+
+function filterApplicants(apps, session) {
+  const f = uiState.filter;
+  const keyword = (f.keyword || "").trim().toLowerCase();
+  const assignedIds = new Set((state.groups[session.id] || []).flatMap(g => g.memberIds));
+
+  return apps.filter(a => {
+    if (f.criterion !== "all" && a.criterion !== f.criterion) return false;
+    if (f.groupStatus === "assigned" && !assignedIds.has(a.id)) return false;
+    if (f.groupStatus === "unassigned" && assignedIds.has(a.id)) return false;
+    if (keyword) {
+      const hay = [
+        a.applicantName, a.applicantEmail, a.applicantCompany,
+        a.currentJob, a.concern, a.experience,
+        ...(a.desiredJobs || []), ...(a.topics || []),
+      ].join(" ").toLowerCase();
+      if (!hay.includes(keyword)) return false;
+    }
+    return true;
+  });
+}
+
+function setFilter(key, value) {
+  uiState.filter[key] = value;
+  render();
+}
+function clearFilter() {
+  uiState.filter = { keyword: "", criterion: "all", groupStatus: "all" };
+  render();
 }
 
 function criterionLabel(c) { return {seniority:"연차", job:"직무", topic:"주제"}[c]; }
@@ -1707,7 +1813,8 @@ function renderDriveConfig() {
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn btn-secondary btn-small" onclick="updateDriveConfig()">설정 저장</button>
         <button id="drive-test-btn" class="btn btn-secondary btn-small" onclick="testDriveConnection()" ${hasUrl ? "" : "disabled"}>연결 테스트</button>
-        <button id="drive-sync-btn" class="btn btn-secondary btn-small" onclick="syncAllToDrive()" ${hasUrl ? "" : "disabled"}>전체 재전송 (${state.applications.length}건, 세션 ${state.sessions.length}개)</button>
+        <button id="drive-fetch-btn" class="btn btn-small" onclick="fetchFromDrive()" ${hasUrl ? "" : "disabled"}>시트에서 신청 가져오기</button>
+        <button id="drive-sync-btn" class="btn btn-secondary btn-small" onclick="syncAllToDrive()" ${hasUrl ? "" : "disabled"}>로컬 → 시트 전체 재전송</button>
       </div>
       ${d.lastSyncAt ? `
         <div style="margin-top:12px; font-size:13px; color:var(--muted);">
@@ -1725,6 +1832,100 @@ function escapeHtml(s) {
 function escapeAttr(s) {
   if (s == null) return "";
   return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+// ===========================================================================
+// CSV 내보내기
+// ===========================================================================
+function csvCell(v) {
+  const s = v == null ? "" : String(v);
+  return '"' + s.replace(/"/g, '""') + '"';
+}
+function csvLine(row) { return row.map(csvCell).join(","); }
+function downloadCsv(filename, rows) {
+  // BOM 붙여 엑셀 한글 깨짐 방지
+  const content = "﻿" + rows.map(csvLine).join("\r\n");
+  const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+}
+function safeFilename(s) {
+  return String(s || "session").replace(/[\/\\:*?"<>|]/g, "_").slice(0, 60);
+}
+function isoDateStamp() {
+  const d = new Date();
+  return d.getFullYear() + String(d.getMonth()+1).padStart(2,"0") + String(d.getDate()).padStart(2,"0");
+}
+
+function exportApplicantsCsv(sessionId) {
+  const session = state.sessions.find(s => s.id === sessionId);
+  const apps = state.applications.filter(a => a.sessionId === sessionId);
+  const groups = state.groups[sessionId] || [];
+  const headers = [
+    "이름","이메일","소속","연차","현재 직무","매칭 기준",
+    "희망 연차","희망 직무","관심 주제","고민","공유 경험",
+    "공개 정보","그룹","신청 일시"
+  ];
+  const rows = [headers];
+  for (const a of apps) {
+    const group = groups.find(g => g.memberIds.includes(a.id));
+    rows.push([
+      a.applicantName, a.applicantEmail, a.applicantCompany,
+      a.seniority + "년", a.currentJob, criterionLabel(a.criterion),
+      SENIORITY_OPTIONS.find(o => o.value === a.desiredSeniority)?.label || "",
+      (a.desiredJobs || []).join(", "),
+      (a.topics || []).join(", "),
+      a.concern, a.experience,
+      (a.disclose || []).join(", "),
+      group ? group.id : "미배정",
+      a.createdAt,
+    ]);
+  }
+  downloadCsv(`${safeFilename(session.name)}_신청자_${isoDateStamp()}.csv`, rows);
+}
+
+function exportGroupsCsv(sessionId) {
+  const session = state.sessions.find(s => s.id === sessionId);
+  const groups = state.groups[sessionId] || [];
+  const cache = buildScoreCache(state.applications.filter(a => a.sessionId === sessionId));
+  const headers = [
+    "그룹","그룹 유형","그룹 크기","그룹 평균 점수","그룹 최저 점수",
+    "이름","이메일","소속","연차","현재 직무","매칭 기준",
+    "관심 주제","고민"
+  ];
+  const rows = [headers];
+  for (const g of groups) {
+    const m = groupMetrics(g, cache);
+    const originLabel = g.origin.replace("criterion:", "").replace("mixed", "혼합");
+    for (const id of g.memberIds) {
+      const a = state.applications.find(app => app.id === id);
+      if (!a) continue;
+      rows.push([
+        g.id, originLabel, g.memberIds.length,
+        m.avg.toFixed(1), m.min.toFixed(1),
+        a.applicantName, a.applicantEmail, a.applicantCompany,
+        a.seniority + "년", a.currentJob, criterionLabel(a.criterion),
+        (a.topics || []).join(", "), a.concern,
+      ]);
+    }
+  }
+  // 미배정
+  const assigned = new Set(groups.flatMap(g => g.memberIds));
+  const unassigned = state.applications.filter(a => a.sessionId === sessionId && !assigned.has(a.id));
+  for (const a of unassigned) {
+    rows.push([
+      "미배정", "", "", "", "",
+      a.applicantName, a.applicantEmail, a.applicantCompany,
+      a.seniority + "년", a.currentJob, criterionLabel(a.criterion),
+      (a.topics || []).join(", "), a.concern,
+    ]);
+  }
+  downloadCsv(`${safeFilename(session.name)}_그룹_${isoDateStamp()}.csv`, rows);
 }
 
 // ===========================================================================

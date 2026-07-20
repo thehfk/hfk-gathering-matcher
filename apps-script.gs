@@ -20,7 +20,8 @@ const APPLICATIONS_SHEET = "신청";
 const SESSION_SHEET = "게더링";
 
 const APPLICATION_HEADERS = [
-  "신청 ID", "세션 ID", "세션명", "이름", "연차", "현재 직무", "매칭 기준",
+  "신청 ID", "세션 ID", "세션명", "이름", "이메일", "소속",
+  "연차", "현재 직무", "매칭 기준",
   "희망 연차", "희망 직무", "관심 주제",
   "고민", "공유 경험", "공개 정보",
   "신청 일시", "수신 일시"
@@ -40,11 +41,12 @@ function doPost(e) {
     if (data.type === "application") {
       result = appendApplication(data.payload);
     } else if (data.type === "syncAll") {
-      // 신규: sessions 배열 지원 (구버전 호환용 session 단일도 처리)
       const sessions = data.sessions || (data.session ? [data.session] : []);
       result = syncAll(data.applications, sessions);
     } else if (data.type === "session") {
       result = upsertSession(data.payload);
+    } else if (data.type === "fetchApplications") {
+      result = fetchApplications();
     } else if (data.type === "ping") {
       result = { ok: true, message: "연결됨" };
     } else {
@@ -92,6 +94,8 @@ function applicationRow(app) {
     app.sessionId || "",
     app.sessionName || "",
     app.name || "",
+    app.email || "",
+    app.company || "",
     app.seniority,
     app.currentJob || "",
     labelCriterion(app.criterion),
@@ -108,6 +112,10 @@ function applicationRow(app) {
 
 function labelCriterion(c) {
   return { seniority: "연차", job: "직무", topic: "주제" }[c] || c;
+}
+
+function unlabelCriterion(label) {
+  return { "연차": "seniority", "직무": "job", "주제": "topic" }[label] || label;
 }
 
 function appendApplication(app) {
@@ -156,6 +164,70 @@ function sessionRow(session) {
     session.targetGroupSize, session.minGroupSize, session.maxGroupSize,
     session.applyDeadline, session.confirmDate, new Date().toISOString()
   ];
+}
+
+function fetchApplications() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const appSheet = ss.getSheetByName(APPLICATIONS_SHEET);
+  const sessionSheet = ss.getSheetByName(SESSION_SHEET);
+
+  const applications = [];
+  if (appSheet && appSheet.getLastRow() > 1) {
+    const rows = appSheet.getRange(2, 1, appSheet.getLastRow() - 1, APPLICATION_HEADERS.length).getValues();
+    for (const row of rows) {
+      if (!row[0]) continue;
+      applications.push({
+        id: String(row[0]),
+        sessionId: String(row[1] || ""),
+        applicantName: String(row[3] || ""),
+        applicantEmail: String(row[4] || ""),
+        applicantCompany: String(row[5] || ""),
+        seniority: Number(row[6]) || 0,
+        currentJob: String(row[7] || ""),
+        criterion: unlabelCriterion(String(row[8] || "")),
+        desiredSeniority: String(row[9] || "") || null,
+        desiredJobs: splitList(row[10]),
+        topics: splitList(row[11]),
+        concern: String(row[12] || ""),
+        experience: String(row[13] || ""),
+        disclose: splitList(row[14]),
+        createdAt: row[15] ? toIsoString(row[15]) : ""
+      });
+    }
+  }
+
+  const sessions = [];
+  if (sessionSheet && sessionSheet.getLastRow() > 1) {
+    const rows = sessionSheet.getRange(2, 1, sessionSheet.getLastRow() - 1, SESSION_HEADERS.length).getValues();
+    for (const row of rows) {
+      if (!row[0]) continue;
+      sessions.push({
+        id: String(row[0]),
+        name: String(row[1] || ""),
+        date: toDateString(row[2]),
+        time: String(row[3] || ""),
+        location: String(row[4] || ""),
+        targetGroupSize: Number(row[5]) || 5,
+        minGroupSize: Number(row[6]) || 4,
+        maxGroupSize: Number(row[7]) || 6,
+        applyDeadline: toDateString(row[8]),
+        confirmDate: toDateString(row[9]),
+      });
+    }
+  }
+  return { ok: true, applications: applications, sessions: sessions };
+}
+
+function splitList(v) {
+  return String(v || "").split(",").map(s => s.trim()).filter(Boolean);
+}
+function toIsoString(v) {
+  if (v instanceof Date) return v.toISOString();
+  return String(v);
+}
+function toDateString(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  return String(v || "");
 }
 
 function upsertSession(session) {
