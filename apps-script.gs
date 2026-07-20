@@ -4,12 +4,21 @@
  * 설치:
  * 1. https://sheets.google.com 에서 새 스프레드시트 생성
  * 2. 확장 프로그램 → Apps Script → 이 파일 전체 붙여넣기
- * 3. 저장 → 배포 → 새 배포
+ * 3. 프로젝트 설정 → 스크립트 속성 →
+ *    - 속성명: ADMIN_TOKEN
+ *    - 값: 임의의 문자열 32자 이상 권장 (예: openssl rand -hex 24)
+ *    - 이 토큰을 아는 사람만 관리자 조회·수정 가능
+ * 4. 저장 → 배포 → 새 배포
  *    - 유형: 웹 앱
  *    - 다음 사용자로 실행: 나
  *    - 액세스 권한: 모든 사용자
- * 4. 발급된 웹 앱 URL을 복사 (https://script.google.com/macros/s/.../exec)
- * 5. HFK 게더링 웹페이지 → 관리자 → Google Drive 연동에 URL 붙여넣기
+ * 5. 발급된 웹 앱 URL을 복사 (https://script.google.com/macros/s/.../exec)
+ * 6. HFK 게더링 웹페이지 → 관리자 → Google Drive 연동에
+ *    URL과 ADMIN_TOKEN을 붙여넣기
+ *
+ * 인증 정책:
+ *  - application(신청 접수), ping: 토큰 불필요 (일반 사용자용)
+ *  - fetchApplications, syncAll, session: 토큰 필수 (관리자용)
  *
  * 시트 구조:
  *  - "신청": 개별 신청 append 로그
@@ -33,11 +42,35 @@ const SESSION_HEADERS = [
   "신청 마감", "확정 예정", "마지막 갱신"
 ];
 
+const ADMIN_ONLY_TYPES = ["fetchApplications", "syncAll", "session"];
+
+function getAdminToken() {
+  return PropertiesService.getScriptProperties().getProperty("ADMIN_TOKEN") || "";
+}
+
+function checkAdmin(data) {
+  const expected = getAdminToken();
+  if (!expected) return { ok: false, error: "서버에 ADMIN_TOKEN이 설정돼 있지 않습니다. Apps Script 프로젝트 설정 → 스크립트 속성에서 ADMIN_TOKEN을 지정하세요." };
+  const provided = data.adminToken || "";
+  if (provided !== expected) return { ok: false, error: "관리자 토큰이 올바르지 않습니다." };
+  return null;
+}
+
+function json(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
 function doPost(e) {
   try {
     const data = JSON.parse(e.postData.contents);
-    let result;
 
+    // 관리자 전용 작업은 토큰 검증
+    if (ADMIN_ONLY_TYPES.indexOf(data.type) >= 0) {
+      const err = checkAdmin(data);
+      if (err) return json(err);
+    }
+
+    let result;
     if (data.type === "application") {
       result = appendApplication(data.payload);
     } else if (data.type === "syncAll") {
@@ -48,18 +81,13 @@ function doPost(e) {
     } else if (data.type === "fetchApplications") {
       result = fetchApplications();
     } else if (data.type === "ping") {
-      result = { ok: true, message: "연결됨" };
+      result = { ok: true, message: "연결됨", adminTokenConfigured: !!getAdminToken() };
     } else {
       result = { ok: false, error: "unknown type: " + data.type };
     }
-
-    return ContentService
-      .createTextOutput(JSON.stringify(result))
-      .setMimeType(ContentService.MimeType.JSON);
+    return json(result);
   } catch (err) {
-    return ContentService
-      .createTextOutput(JSON.stringify({ ok: false, error: err.message }))
-      .setMimeType(ContentService.MimeType.JSON);
+    return json({ ok: false, error: err.message });
   }
 }
 

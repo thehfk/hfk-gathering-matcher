@@ -380,6 +380,7 @@ function defaultState() {
     confirmed: {},          // {sessionId: bool}
     drive: {
       webAppUrl: "",
+      adminToken: "",
       enabled: false,
       lastSyncAt: null,
       lastSyncResult: null,
@@ -451,6 +452,7 @@ function migrate(s) {
   if (!s.groups || Array.isArray(s.groups)) s.groups = {};
   if (!s.confirmed || typeof s.confirmed !== "object") s.confirmed = {};
   if (!s.drive) s.drive = defaultState().drive;
+  if (s.drive.adminToken === undefined) s.drive.adminToken = "";
   return s;
 }
 
@@ -559,8 +561,13 @@ async function pushApplicationToDrive(app) {
 
 async function pushSessionToDrive(session) {
   if (!state.drive.enabled || !state.drive.webAppUrl) return;
+  if (!state.drive.adminToken) return; // 토큰 없으면 세션 동기화 스킵 (사용자는 관리자 아니어도 됨)
   try {
-    await postToDrive({ type: "session", payload: session });
+    await postToDrive({
+      type: "session",
+      payload: session,
+      adminToken: state.drive.adminToken,
+    });
   } catch (e) { console.warn("세션 저장 실패:", e); }
 }
 
@@ -569,7 +576,10 @@ async function testDriveConnection() {
   if (btn) { btn.disabled = true; btn.textContent = "테스트 중..."; }
   try {
     const result = await postToDrive({ type: "ping" });
-    alert("연결 성공: " + (result.message || "OK"));
+    const tokenNote = result.adminTokenConfigured
+      ? "\n서버에 ADMIN_TOKEN이 설정되어 있습니다."
+      : "\n⚠️ 서버에 ADMIN_TOKEN이 설정되지 않았습니다. Apps Script 프로젝트 설정 → 스크립트 속성에서 지정해주세요.";
+    alert("연결 성공: " + (result.message || "OK") + tokenNote);
   } catch (e) {
     alert("연결 실패: " + e.message);
   } finally {
@@ -578,11 +588,13 @@ async function testDriveConnection() {
 }
 
 async function syncAllToDrive() {
+  if (!state.drive.adminToken) return alert("관리자 토큰이 필요합니다. Drive 설정에서 토큰을 입력해주세요.");
   const btn = document.getElementById("drive-sync-btn");
   if (btn) { btn.disabled = true; btn.textContent = "전송 중..."; }
   try {
     const result = await postToDrive({
       type: "syncAll",
+      adminToken: state.drive.adminToken,
       applications: state.applications.map(serializeApp),
       sessions: state.sessions,
     });
@@ -600,10 +612,14 @@ async function syncAllToDrive() {
 }
 
 async function fetchFromDrive() {
+  if (!state.drive.adminToken) return alert("관리자 토큰이 필요합니다. Drive 설정에서 토큰을 입력해주세요.");
   const btn = document.getElementById("drive-fetch-btn");
   if (btn) { btn.disabled = true; btn.textContent = "가져오는 중..."; }
   try {
-    const result = await postToDrive({ type: "fetchApplications" });
+    const result = await postToDrive({
+      type: "fetchApplications",
+      adminToken: state.drive.adminToken,
+    });
     if (!result.ok) throw new Error(result.error || "실패");
 
     const fetchedApps = result.applications || [];
@@ -646,6 +662,7 @@ async function fetchFromDrive() {
 function updateDriveConfig() {
   state.drive.webAppUrl = document.getElementById("drive-url").value.trim();
   state.drive.enabled = document.getElementById("drive-enabled").checked;
+  state.drive.adminToken = document.getElementById("drive-token").value.trim();
   saveState();
   render();
 }
@@ -1888,6 +1905,8 @@ function unconfirmGroups(sessionId) {
 function renderDriveConfig() {
   const d = state.drive;
   const hasUrl = !!d.webAppUrl;
+  const hasToken = !!d.adminToken;
+  const adminReady = hasUrl && hasToken;
   return `
     <div class="card">
       <div class="card-header">
@@ -1896,23 +1915,28 @@ function renderDriveConfig() {
       </div>
       <p class="section-desc">
         Apps Script Web App URL을 입력하면 신청·세션 정보가 Google Sheet에 자동 저장됩니다.
-        설치법은 <code>apps-script.gs</code> 파일 상단 주석 참고.
+        관리자 조회·수정에는 <b>ADMIN_TOKEN</b>이 필요합니다. 설치법은 <code>apps-script.gs</code> 파일 상단 주석 참고.
       </p>
       <div class="form-row">
         <label>Web App URL</label>
         <input id="drive-url" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeAttr(d.webAppUrl)}">
       </div>
       <div class="form-row">
+        <label>관리자 토큰 <span style="color:var(--muted); font-weight:400;">(Apps Script 스크립트 속성 ADMIN_TOKEN 값)</span></label>
+        <input id="drive-token" type="password" placeholder="관리자만 알아야 하는 문자열" value="${escapeAttr(d.adminToken)}" autocomplete="off">
+        ${hasToken ? '<div style="font-size:12px; color:var(--ok); margin-top:4px;">✓ 토큰 저장됨 (이 브라우저에만)</div>' : ""}
+      </div>
+      <div class="form-row">
         <label class="inline">
           <input type="checkbox" id="drive-enabled" ${d.enabled ? "checked" : ""}>
-          신청 시 자동 저장 활성화
+          신청 시 자동 저장 활성화 (사용자 신청은 토큰 없이도 접수됨)
         </label>
       </div>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn btn-secondary btn-small" onclick="updateDriveConfig()">설정 저장</button>
         <button id="drive-test-btn" class="btn btn-secondary btn-small" onclick="testDriveConnection()" ${hasUrl ? "" : "disabled"}>연결 테스트</button>
-        <button id="drive-fetch-btn" class="btn btn-small" onclick="fetchFromDrive()" ${hasUrl ? "" : "disabled"}>시트에서 신청 가져오기</button>
-        <button id="drive-sync-btn" class="btn btn-secondary btn-small" onclick="syncAllToDrive()" ${hasUrl ? "" : "disabled"}>로컬 → 시트 전체 재전송</button>
+        <button id="drive-fetch-btn" class="btn btn-small" onclick="fetchFromDrive()" ${adminReady ? "" : "disabled"} title="${adminReady ? "" : "URL과 관리자 토큰이 필요합니다"}">시트에서 신청 가져오기</button>
+        <button id="drive-sync-btn" class="btn btn-secondary btn-small" onclick="syncAllToDrive()" ${adminReady ? "" : "disabled"} title="${adminReady ? "" : "URL과 관리자 토큰이 필요합니다"}">로컬 → 시트 전체 재전송</button>
       </div>
       ${d.lastSyncAt ? `
         <div style="margin-top:12px; font-size:13px; color:var(--muted);">
