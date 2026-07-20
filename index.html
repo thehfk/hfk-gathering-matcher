@@ -380,7 +380,6 @@ function defaultState() {
     confirmed: {},          // {sessionId: bool}
     drive: {
       webAppUrl: "",
-      adminToken: "",
       enabled: false,
       lastSyncAt: null,
       lastSyncResult: null,
@@ -452,59 +451,42 @@ function migrate(s) {
   if (!s.groups || Array.isArray(s.groups)) s.groups = {};
   if (!s.confirmed || typeof s.confirmed !== "object") s.confirmed = {};
   if (!s.drive) s.drive = defaultState().drive;
-  if (s.drive.adminToken === undefined) s.drive.adminToken = "";
+  delete s.drive.adminToken; // 구버전 이관: 세션 저장소로 이동
   return s;
 }
 
 function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
 
 // ===========================================================================
-// 관리자 PIN 잠금 (클라이언트 게이트)
+// 관리자 로그인 (비밀번호 하나로 UI 잠금 + API 토큰 통합)
 // ===========================================================================
-// PIN 해시는 별도 localStorage 키에 저장 (state와 분리, 초기화·마이그레이션 영향 없음)
-// 잠금 해제 상태는 sessionStorage에 저장 → 탭 닫으면 다시 PIN 필요
-const ADMIN_PIN_KEY = "hfk_admin_pin_hash";
-const ADMIN_UNLOCK_KEY = "hfk_admin_unlocked";
+// 비밀번호는 Apps Script Script Properties의 ADMIN_TOKEN 값과 대조.
+// 로그인 성공한 비밀번호는 sessionStorage에 저장되어 admin API 요청 시 자동 첨부.
+// 탭 닫으면 자동 로그아웃.
+const ADMIN_SESSION_KEY = "hfk_admin_password";
 
-async function sha256(text) {
-  const buf = new TextEncoder().encode(text);
-  const hash = await crypto.subtle.digest("SHA-256", buf);
-  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
-}
-function adminPinExists() { return !!localStorage.getItem(ADMIN_PIN_KEY); }
-function isAdminUnlocked() { return sessionStorage.getItem(ADMIN_UNLOCK_KEY) === "1"; }
-async function setAdminPin(pin) {
-  localStorage.setItem(ADMIN_PIN_KEY, await sha256(pin));
-  sessionStorage.setItem(ADMIN_UNLOCK_KEY, "1");
-}
-async function verifyAdminPin(pin) {
-  if ((await sha256(pin)) === localStorage.getItem(ADMIN_PIN_KEY)) {
-    sessionStorage.setItem(ADMIN_UNLOCK_KEY, "1");
-    return true;
-  }
-  return false;
-}
+function adminPassword() { return sessionStorage.getItem(ADMIN_SESSION_KEY) || ""; }
+function isAdminUnlocked() { return !!adminPassword(); }
 function lockAdmin() {
-  sessionStorage.removeItem(ADMIN_UNLOCK_KEY);
+  sessionStorage.removeItem(ADMIN_SESSION_KEY);
   render();
 }
-function resetAdminPin() {
-  if (!confirm("관리자 PIN을 초기화합니다. 다음 접근 시 새 PIN을 설정하게 됩니다.")) return;
-  localStorage.removeItem(ADMIN_PIN_KEY);
-  sessionStorage.removeItem(ADMIN_UNLOCK_KEY);
-  render();
-}
-async function changeAdminPin() {
-  const oldPin = prompt("현재 PIN을 입력해주세요.");
-  if (!oldPin) return;
-  if (!(await verifyAdminPin(oldPin))) return alert("현재 PIN이 일치하지 않습니다.");
-  const newPin = prompt("새 PIN (4자 이상)");
-  if (!newPin || newPin.length < 4) return alert("PIN은 4자 이상이어야 합니다.");
-  const confirmPin = prompt("새 PIN 확인");
-  if (newPin !== confirmPin) return alert("두 PIN이 일치하지 않습니다.");
-  await setAdminPin(newPin);
-  alert("PIN이 변경되었습니다.");
-  render();
+
+async function loginAdmin(password) {
+  if (!password) return { ok: false, error: "비밀번호를 입력해주세요." };
+
+  // 서버가 설정돼 있으면 반드시 검증
+  if (state.drive.webAppUrl) {
+    try {
+      const result = await postToDrive({ type: "verifyPassword", password });
+      if (!result.ok) return { ok: false, error: result.error || "비밀번호가 일치하지 않습니다." };
+    } catch (e) {
+      return { ok: false, error: "서버 확인 실패: " + e.message };
+    }
+  }
+  // 서버 URL 없으면 개발/데모 모드 — 아무 비밀번호나 허용
+  sessionStorage.setItem(ADMIN_SESSION_KEY, password);
+  return { ok: true };
 }
 function resetState() {
   if (!confirm("모든 데이터를 초기화합니다. 계속하시겠습니까?")) return;
@@ -561,12 +543,12 @@ async function pushApplicationToDrive(app) {
 
 async function pushSessionToDrive(session) {
   if (!state.drive.enabled || !state.drive.webAppUrl) return;
-  if (!state.drive.adminToken) return; // 토큰 없으면 세션 동기화 스킵 (사용자는 관리자 아니어도 됨)
+  if (!adminPassword()) return; // 관리자 로그인 안 된 상태에선 세션 동기화 스킵
   try {
     await postToDrive({
       type: "session",
       payload: session,
-      adminToken: state.drive.adminToken,
+      adminToken: adminPassword(),
     });
   } catch (e) { console.warn("세션 저장 실패:", e); }
 }
@@ -588,13 +570,13 @@ async function testDriveConnection() {
 }
 
 async function syncAllToDrive() {
-  if (!state.drive.adminToken) return alert("관리자 토큰이 필요합니다. Drive 설정에서 토큰을 입력해주세요.");
+  if (!adminPassword()) return alert("관리자 로그인 후 사용할 수 있습니다.");
   const btn = document.getElementById("drive-sync-btn");
   if (btn) { btn.disabled = true; btn.textContent = "전송 중..."; }
   try {
     const result = await postToDrive({
       type: "syncAll",
-      adminToken: state.drive.adminToken,
+      adminToken: adminPassword(),
       applications: state.applications.map(serializeApp),
       sessions: state.sessions,
     });
@@ -612,13 +594,13 @@ async function syncAllToDrive() {
 }
 
 async function fetchFromDrive() {
-  if (!state.drive.adminToken) return alert("관리자 토큰이 필요합니다. Drive 설정에서 토큰을 입력해주세요.");
+  if (!adminPassword()) return alert("관리자 로그인 후 사용할 수 있습니다.");
   const btn = document.getElementById("drive-fetch-btn");
   if (btn) { btn.disabled = true; btn.textContent = "가져오는 중..."; }
   try {
     const result = await postToDrive({
       type: "fetchApplications",
-      adminToken: state.drive.adminToken,
+      adminToken: adminPassword(),
     });
     if (!result.ok) throw new Error(result.error || "실패");
 
@@ -662,7 +644,6 @@ async function fetchFromDrive() {
 function updateDriveConfig() {
   state.drive.webAppUrl = document.getElementById("drive-url").value.trim();
   state.drive.enabled = document.getElementById("drive-enabled").checked;
-  state.drive.adminToken = document.getElementById("drive-token").value.trim();
   saveState();
   render();
 }
@@ -1419,8 +1400,7 @@ function renderAdminView() {
       <button class="btn btn-secondary btn-small" onclick="resetState()">전체 초기화</button>
       <div class="toolbar-spacer"></div>
       <span style="font-size:13px; color:var(--muted);">세션 ${state.sessions.length}개 · 전체 신청 ${state.applications.length}건</span>
-      <button class="btn btn-secondary btn-small" onclick="changeAdminPin()">PIN 변경</button>
-      <button class="btn btn-secondary btn-small" onclick="lockAdmin()">잠금</button>
+      <button class="btn btn-secondary btn-small" onclick="lockAdmin()">로그아웃</button>
     </div>
 
     ${renderSessionListAdmin()}
@@ -1608,45 +1588,32 @@ function unselectAdminSession() {
 }
 
 function renderAdminLockScreen() {
-  const needsSetup = !adminPinExists();
+  const noServer = !state.drive.webAppUrl;
   return `
     <div class="card" style="max-width:420px; margin: 60px auto;">
-      <h3>${needsSetup ? "관리자 PIN 설정" : "관리자 잠금"}</h3>
-      <p class="section-desc">
-        ${needsSetup
-          ? "이 브라우저에서 처음 관리자에 접근합니다. 4자 이상의 PIN을 설정해주세요. PIN 해시만 저장되며, 잊으면 브라우저 저장소를 초기화해야 재설정할 수 있습니다."
-          : "관리자 페이지에 접근하려면 PIN을 입력해주세요."}
-      </p>
-      <div class="form-row">
-        <label>PIN</label>
-        <input type="password" id="admin-pin-1" placeholder="4자 이상" autocomplete="off"
-          onkeydown="if(event.key==='Enter') submitAdminPin()">
-      </div>
-      ${needsSetup ? `
-        <div class="form-row">
-          <label>PIN 확인</label>
-          <input type="password" id="admin-pin-2" placeholder="한 번 더 입력" autocomplete="off"
-            onkeydown="if(event.key==='Enter') submitAdminPin()">
+      <h3>관리자 로그인</h3>
+      ${noServer ? `
+        <div class="banner banner-warn" style="margin-bottom:12px;">
+          Google Sheets 연동이 설정돼 있지 않아 서버 검증 없이 접근합니다 (개발/데모 모드).
         </div>
-      ` : ""}
-      <div style="display:flex; gap:8px; margin-top:16px;">
-        <button class="btn" onclick="submitAdminPin()">${needsSetup ? "설정" : "잠금 해제"}</button>
-        ${!needsSetup ? `<button class="btn-ghost btn-small" onclick="resetAdminPin()" style="margin-left:auto;">PIN을 잊었어요</button>` : ""}
+      ` : `
+        <p class="section-desc">Apps Script에 설정된 관리자 비밀번호를 입력해주세요.</p>
+      `}
+      <div class="form-row">
+        <label>비밀번호</label>
+        <input type="password" id="admin-password" placeholder="관리자 비밀번호" autocomplete="off"
+          onkeydown="if(event.key==='Enter') submitAdminLogin()">
       </div>
+      <button class="btn" onclick="submitAdminLogin()">로그인</button>
     </div>
   `;
 }
 
-async function submitAdminPin() {
-  const pin = document.getElementById("admin-pin-1").value;
-  if (!pin || pin.length < 4) return alert("PIN은 4자 이상이어야 합니다.");
-  if (!adminPinExists()) {
-    const confirmPin = document.getElementById("admin-pin-2").value;
-    if (pin !== confirmPin) return alert("두 PIN이 일치하지 않습니다.");
-    await setAdminPin(pin);
-  } else {
-    if (!(await verifyAdminPin(pin))) return alert("PIN이 일치하지 않습니다.");
-  }
+async function submitAdminLogin() {
+  const input = document.getElementById("admin-password");
+  const password = input?.value || "";
+  const result = await loginAdmin(password);
+  if (!result.ok) return alert(result.error);
   render();
 }
 
@@ -1905,8 +1872,6 @@ function unconfirmGroups(sessionId) {
 function renderDriveConfig() {
   const d = state.drive;
   const hasUrl = !!d.webAppUrl;
-  const hasToken = !!d.adminToken;
-  const adminReady = hasUrl && hasToken;
   return `
     <div class="card">
       <div class="card-header">
@@ -1915,28 +1880,23 @@ function renderDriveConfig() {
       </div>
       <p class="section-desc">
         Apps Script Web App URL을 입력하면 신청·세션 정보가 Google Sheet에 자동 저장됩니다.
-        관리자 조회·수정에는 <b>ADMIN_TOKEN</b>이 필요합니다. 설치법은 <code>apps-script.gs</code> 파일 상단 주석 참고.
+        관리자 조회·수정은 로그인한 비밀번호로 인증됩니다. 설치법은 <code>apps-script.gs</code> 파일 상단 주석 참고.
       </p>
       <div class="form-row">
         <label>Web App URL</label>
         <input id="drive-url" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeAttr(d.webAppUrl)}">
       </div>
       <div class="form-row">
-        <label>관리자 토큰 <span style="color:var(--muted); font-weight:400;">(Apps Script 스크립트 속성 ADMIN_TOKEN 값)</span></label>
-        <input id="drive-token" type="password" placeholder="관리자만 알아야 하는 문자열" value="${escapeAttr(d.adminToken)}" autocomplete="off">
-        ${hasToken ? '<div style="font-size:12px; color:var(--ok); margin-top:4px;">✓ 토큰 저장됨 (이 브라우저에만)</div>' : ""}
-      </div>
-      <div class="form-row">
         <label class="inline">
           <input type="checkbox" id="drive-enabled" ${d.enabled ? "checked" : ""}>
-          신청 시 자동 저장 활성화 (사용자 신청은 토큰 없이도 접수됨)
+          신청 시 자동 저장 활성화
         </label>
       </div>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn btn-secondary btn-small" onclick="updateDriveConfig()">설정 저장</button>
         <button id="drive-test-btn" class="btn btn-secondary btn-small" onclick="testDriveConnection()" ${hasUrl ? "" : "disabled"}>연결 테스트</button>
-        <button id="drive-fetch-btn" class="btn btn-small" onclick="fetchFromDrive()" ${adminReady ? "" : "disabled"} title="${adminReady ? "" : "URL과 관리자 토큰이 필요합니다"}">시트에서 신청 가져오기</button>
-        <button id="drive-sync-btn" class="btn btn-secondary btn-small" onclick="syncAllToDrive()" ${adminReady ? "" : "disabled"} title="${adminReady ? "" : "URL과 관리자 토큰이 필요합니다"}">로컬 → 시트 전체 재전송</button>
+        <button id="drive-fetch-btn" class="btn btn-small" onclick="fetchFromDrive()" ${hasUrl ? "" : "disabled"}>시트에서 신청 가져오기</button>
+        <button id="drive-sync-btn" class="btn btn-secondary btn-small" onclick="syncAllToDrive()" ${hasUrl ? "" : "disabled"}>로컬 → 시트 전체 재전송</button>
       </div>
       ${d.lastSyncAt ? `
         <div style="margin-top:12px; font-size:13px; color:var(--muted);">

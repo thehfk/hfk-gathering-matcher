@@ -80,6 +80,11 @@ function doPost(e) {
       result = upsertSession(data.payload);
     } else if (data.type === "fetchApplications") {
       result = fetchApplications();
+    } else if (data.type === "verifyPassword") {
+      const expected = getAdminToken();
+      if (!expected) result = { ok: false, error: "서버에 관리자 비밀번호가 설정되지 않았습니다. Apps Script 프로젝트 설정 → 스크립트 속성에서 ADMIN_TOKEN을 지정해주세요." };
+      else if (data.password === expected) result = { ok: true };
+      else result = { ok: false, error: "비밀번호가 일치하지 않습니다." };
     } else if (data.type === "ping") {
       result = { ok: true, message: "연결됨", adminTokenConfigured: !!getAdminToken() };
     } else {
