@@ -337,6 +337,12 @@ const SENIORITY_OPTIONS = [
 ];
 
 // ===========================================================================
+// 배포 설정 — 관리자가 Apps Script 배포 후 여기에 URL 입력
+// 비워두면 각 브라우저 로컬 상태만 사용 (개발/데모 모드)
+// ===========================================================================
+const PUBLIC_WEB_APP_URL = "";
+
+// ===========================================================================
 // 상태 관리
 // ===========================================================================
 const STORAGE_KEY = "hfk_gathering_state_v2";
@@ -864,9 +870,10 @@ function deleteSession(sessionId) {
   if (!session) return;
   const appCount = state.applications.filter(a => a.sessionId === sessionId).length;
   const msg = appCount > 0
-    ? `[${session.name}] 세션과 관련 신청 ${appCount}건, 그룹 배정 데이터를 모두 삭제합니다. 계속하시겠습니까?`
-    : `[${session.name}] 세션을 삭제하시겠습니까?`;
+    ? `[${session.name}] 세션과 관련 신청 ${appCount}건, 그룹 배정 데이터를 모두 삭제합니다. 시트에서도 함께 삭제됩니다. 계속하시겠습니까?`
+    : `[${session.name}] 세션을 삭제하시겠습니까? 시트에서도 함께 삭제됩니다.`;
   if (!confirm(msg)) return;
+
   state.sessions = state.sessions.filter(s => s.id !== sessionId);
   state.applications = state.applications.filter(a => a.sessionId !== sessionId);
   delete state.groups[sessionId];
@@ -875,6 +882,15 @@ function deleteSession(sessionId) {
   if (uiState.applyingSessionId === sessionId) uiState.applyingSessionId = null;
   saveState();
   render();
+
+  // 시트에서도 삭제
+  if (state.drive.webAppUrl && adminPassword()) {
+    postToDrive({
+      type: "deleteSession",
+      sessionId,
+      adminToken: adminPassword(),
+    }).catch(e => console.warn("세션 삭제 시트 반영 실패:", e));
+  }
 }
 
 function sessionStatusTag(session) {
@@ -2080,7 +2096,36 @@ function render() {
   renderAdminView();
 }
 
+// 배포 URL이 하드코딩되어 있으면 state에 자동 반영 (모든 방문자 공통)
+if (PUBLIC_WEB_APP_URL) {
+  if (state.drive.webAppUrl !== PUBLIC_WEB_APP_URL) {
+    state.drive.webAppUrl = PUBLIC_WEB_APP_URL;
+    state.drive.enabled = true;
+    saveState();
+  }
+}
+
 render();
+
+// 페이지 로드 시 시트에서 최신 세션 자동 조회 (공개 데이터, 인증 불필요)
+if (state.drive.webAppUrl) {
+  fetchSessionsFromDrive().catch(err => console.warn("세션 자동 조회 실패:", err));
+}
+
+async function fetchSessionsFromDrive() {
+  const result = await postToDrive({ type: "fetchSessions" });
+  if (!result.ok || !Array.isArray(result.sessions)) return;
+  if (result.sessions.length === 0) return; // 시트 비어있으면 로컬 유지
+  // 서버가 세션 정본. 로컬 sessions는 서버 값으로 교체
+  state.sessions = result.sessions;
+  // 삭제된 세션 관련 로컬 데이터 정리
+  const validIds = new Set(result.sessions.map(s => s.id));
+  state.applications = state.applications.filter(a => validIds.has(a.sessionId));
+  for (const id of Object.keys(state.groups)) if (!validIds.has(id)) delete state.groups[id];
+  for (const id of Object.keys(state.confirmed)) if (!validIds.has(id)) delete state.confirmed[id];
+  saveState();
+  render();
+}
 </script>
 
 </body>

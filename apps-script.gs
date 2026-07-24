@@ -37,12 +37,12 @@ const APPLICATION_HEADERS = [
 ];
 
 const SESSION_HEADERS = [
-  "게더링 ID", "게더링명", "날짜", "시간", "장소",
+  "게더링 ID", "게더링명", "날짜", "시간", "장소", "소개",
   "목표 인원", "최소 인원", "최대 인원",
   "신청 마감", "확정 예정", "마지막 갱신"
 ];
 
-const ADMIN_ONLY_TYPES = ["fetchApplications", "syncAll", "session"];
+const ADMIN_ONLY_TYPES = ["fetchApplications", "syncAll", "session", "deleteSession"];
 
 function getAdminToken() {
   return PropertiesService.getScriptProperties().getProperty("ADMIN_TOKEN") || "";
@@ -80,6 +80,11 @@ function doPost(e) {
       result = upsertSession(data.payload);
     } else if (data.type === "fetchApplications") {
       result = fetchApplications();
+    } else if (data.type === "fetchSessions") {
+      // 세션은 공개 정보 (사용자가 신청 가능한 게더링 목록)
+      result = { ok: true, sessions: readSessions() };
+    } else if (data.type === "deleteSession") {
+      result = deleteSessionFromSheet(data.sessionId);
     } else if (data.type === "verifyPassword") {
       const expected = getAdminToken();
       if (!expected) result = { ok: false, error: "서버에 관리자 비밀번호가 설정되지 않았습니다. Apps Script 프로젝트 설정 → 스크립트 속성에서 ADMIN_TOKEN을 지정해주세요." };
@@ -192,7 +197,7 @@ function syncAll(applications, sessions) {
 
 function sessionRow(session) {
   return [
-    session.id, session.name, session.date, session.time, session.location,
+    session.id, session.name, session.date, session.time, session.location, session.intro || "",
     session.targetGroupSize, session.minGroupSize, session.maxGroupSize,
     session.applyDeadline, session.confirmDate, new Date().toISOString()
   ];
@@ -227,26 +232,33 @@ function fetchApplications() {
     }
   }
 
-  const sessions = [];
-  if (sessionSheet && sessionSheet.getLastRow() > 1) {
-    const rows = sessionSheet.getRange(2, 1, sessionSheet.getLastRow() - 1, SESSION_HEADERS.length).getValues();
-    for (const row of rows) {
-      if (!row[0]) continue;
-      sessions.push({
-        id: String(row[0]),
-        name: String(row[1] || ""),
-        date: toDateString(row[2]),
-        time: String(row[3] || ""),
-        location: String(row[4] || ""),
-        targetGroupSize: Number(row[5]) || 5,
-        minGroupSize: Number(row[6]) || 4,
-        maxGroupSize: Number(row[7]) || 6,
-        applyDeadline: toDateString(row[8]),
-        confirmDate: toDateString(row[9]),
-      });
-    }
-  }
+  const sessions = readSessions();
   return { ok: true, applications: applications, sessions: sessions };
+}
+
+function readSessions() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SESSION_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, SESSION_HEADERS.length).getValues();
+  const sessions = [];
+  for (const row of rows) {
+    if (!row[0]) continue;
+    sessions.push({
+      id: String(row[0]),
+      name: String(row[1] || ""),
+      date: toDateString(row[2]),
+      time: String(row[3] || ""),
+      location: String(row[4] || ""),
+      intro: String(row[5] || ""),
+      targetGroupSize: Number(row[6]) || 5,
+      minGroupSize: Number(row[7]) || 4,
+      maxGroupSize: Number(row[8]) || 6,
+      applyDeadline: toDateString(row[9]),
+      confirmDate: toDateString(row[10]),
+    });
+  }
+  return sessions;
 }
 
 function splitList(v) {
@@ -259,6 +271,38 @@ function toIsoString(v) {
 function toDateString(v) {
   if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), "yyyy-MM-dd");
   return String(v || "");
+}
+
+function deleteSessionFromSheet(sessionId) {
+  if (!sessionId) return { ok: false, error: "sessionId 없음" };
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // 세션 시트에서 해당 행 삭제
+  const sessionSheet = ss.getSheetByName(SESSION_SHEET);
+  let sessionDeleted = false;
+  if (sessionSheet && sessionSheet.getLastRow() > 1) {
+    const ids = sessionSheet.getRange(2, 1, sessionSheet.getLastRow() - 1, 1).getValues().flat();
+    const idx = ids.indexOf(sessionId);
+    if (idx >= 0) {
+      sessionSheet.deleteRow(idx + 2);
+      sessionDeleted = true;
+    }
+  }
+
+  // 관련 신청도 함께 삭제 (신청 시트 B열 = 세션 ID)
+  const appSheet = ss.getSheetByName(APPLICATIONS_SHEET);
+  let appsDeleted = 0;
+  if (appSheet && appSheet.getLastRow() > 1) {
+    const sessionIds = appSheet.getRange(2, 2, appSheet.getLastRow() - 1, 1).getValues().flat();
+    for (let i = sessionIds.length - 1; i >= 0; i--) {
+      if (sessionIds[i] === sessionId) {
+        appSheet.deleteRow(i + 2);
+        appsDeleted++;
+      }
+    }
+  }
+
+  return { ok: true, sessionDeleted: sessionDeleted, appsDeleted: appsDeleted };
 }
 
 function upsertSession(session) {
