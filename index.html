@@ -903,7 +903,8 @@ function sessionStatusTag(session) {
   if (state.confirmed[session.id]) return '<span class="tag tag-ok">그룹 확정</span>';
   if (state.groups[session.id]) return '<span class="tag tag-warn">그룹 배정 중</span>';
   const today = new Date().toISOString().slice(0, 10);
-  if (session.applyDeadline && session.applyDeadline < today) return '<span class="tag">신청 마감</span>';
+  const deadlineIso = toIsoDate(session.applyDeadline);
+  if (deadlineIso && deadlineIso < today) return '<span class="tag">신청 마감</span>';
   return '<span class="tag tag-ok">신청 가능</span>';
 }
 
@@ -1050,10 +1051,10 @@ function renderUserSessionCard(session) {
         <div>
           <div class="session-card-title">${escapeHtml(s.name)}</div>
           <div class="session-card-meta">
-            ${s.date || "날짜 미정"} · ${escapeHtml(s.time || "시간 미정")} · ${escapeHtml(s.location || "장소 미정")}
+            ${formatDate(s.date) || "날짜 미정"} · ${escapeHtml(s.time || "시간 미정")} · ${escapeHtml(s.location || "장소 미정")}
           </div>
           <div class="session-card-meta">
-            그룹 ${s.targetGroupSize}명 · 신청 마감 ${s.applyDeadline || "-"} · 현재 ${applicantCount}명 신청
+            그룹 ${s.targetGroupSize}명 · 신청 마감 ${formatDate(s.applyDeadline) || "-"} · 현재 ${applicantCount}명 신청
           </div>
           ${s.intro ? `<div style="margin-top:8px; font-size:14px;">${escapeHtml(s.intro)}</div>` : ""}
         </div>
@@ -1318,7 +1319,7 @@ function renderMyApplicationBrief(app) {
         <div>
           <div class="session-card-title">${escapeHtml(session.name)}</div>
           <div class="session-card-meta">
-            ${session.date} · ${escapeHtml(session.time)} · ${escapeHtml(session.location)}
+            ${formatDate(session.date)} · ${escapeHtml(session.time)} · ${escapeHtml(session.location)}
           </div>
           <div class="session-card-meta">
             ${app.seniority}년 · ${escapeHtml(app.currentJob)} ·
@@ -1356,7 +1357,7 @@ function renderMyGroup(app) {
   return `
     <div class="card">
       <h3>${escapeHtml(session.name)} — 내 그룹 (${myGroup.id})</h3>
-      <p class="section-desc">${session.date} · ${escapeHtml(session.time)} · ${escapeHtml(session.location)}</p>
+      <p class="section-desc">${formatDate(session.date)} · ${escapeHtml(session.time)} · ${escapeHtml(session.location)}</p>
       <div class="member-list">
         ${members.map(ma => {
           const isMe = ma.applicantId === app.applicantId;
@@ -1443,7 +1444,7 @@ function renderAdminSessionCard(s) {
         <div>
           <div class="session-card-title">${escapeHtml(s.name)}</div>
           <div class="session-card-meta">
-            ${s.date || "날짜 미정"} · ${escapeHtml(s.time || "시간 미정")} · ${escapeHtml(s.location || "장소 미정")}
+            ${formatDate(s.date) || "날짜 미정"} · ${escapeHtml(s.time || "시간 미정")} · ${escapeHtml(s.location || "장소 미정")}
           </div>
           <div class="session-card-meta">
             신청 ${appCount}건 · 그룹 ${groupCount}개 · 목표 ${s.targetGroupSize}명
@@ -1471,7 +1472,7 @@ function renderSessionEditForm(s) {
         </div>
         <div>
           <label>날짜</label>
-          <input id="s-date" type="date" value="${s.date}">
+          <input id="s-date" type="date" value="${toIsoDate(s.date)}">
         </div>
         <div>
           <label>시간</label>
@@ -1500,11 +1501,11 @@ function renderSessionEditForm(s) {
         <div></div>
         <div>
           <label>신청 마감일</label>
-          <input id="s-deadline" type="date" value="${s.applyDeadline}">
+          <input id="s-deadline" type="date" value="${toIsoDate(s.applyDeadline)}">
         </div>
         <div>
           <label>그룹 확정 예정일</label>
-          <input id="s-confirm" type="date" value="${s.confirmDate}">
+          <input id="s-confirm" type="date" value="${toIsoDate(s.confirmDate)}">
         </div>
       </div>
       <div style="margin-top:16px; display:flex; gap:8px;">
@@ -1905,6 +1906,28 @@ function escapeHtml(s) {
 function escapeAttr(s) {
   if (s == null) return "";
   return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+// 어떤 형식이든 YYYY-MM-DD로 정규화 (input value, 비교에 사용)
+function toIsoDate(v) {
+  if (!v) return "";
+  const s = String(v);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return s.slice(0, 10);
+  const d = new Date(s);
+  if (isNaN(d)) return "";
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+
+// 표시용: "8월 3일 (월)"
+const WEEKDAYS = ["일","월","화","수","목","금","토"];
+function formatDate(v) {
+  if (!v) return "";
+  const iso = toIsoDate(v);
+  if (!iso) return String(v);
+  const [y, m, d] = iso.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  return `${m}월 ${d}일 (${WEEKDAYS[date.getDay()]})`;
 }
 
 // ===========================================================================
