@@ -536,10 +536,16 @@ function serializeApp(app) {
 }
 
 async function pushApplicationToDrive(app) {
-  if (!state.drive.enabled || !state.drive.webAppUrl) return;
+  if (!state.drive.enabled || !state.drive.webAppUrl) {
+    console.warn("[Drive] 신청 저장 스킵:", { enabled: state.drive.enabled, hasUrl: !!state.drive.webAppUrl });
+    return;
+  }
   try {
-    await postToDrive({ type: "application", payload: serializeApp(app) });
-  } catch (e) { console.warn("Drive 저장 실패:", e); }
+    const result = await postToDrive({ type: "application", payload: serializeApp(app) });
+    console.log("[Drive] 신청 저장 결과:", result);
+  } catch (e) {
+    console.error("[Drive] 신청 저장 실패:", e);
+  }
 }
 
 async function pushSessionToDrive(session) {
@@ -2097,8 +2103,9 @@ function render() {
 }
 
 // 배포 URL이 하드코딩되어 있으면 state에 자동 반영 (모든 방문자 공통)
+// enabled는 항상 true로 강제 (사용자 신청이 시트로 자동 전송되도록)
 if (PUBLIC_WEB_APP_URL) {
-  if (state.drive.webAppUrl !== PUBLIC_WEB_APP_URL) {
+  if (state.drive.webAppUrl !== PUBLIC_WEB_APP_URL || !state.drive.enabled) {
     state.drive.webAppUrl = PUBLIC_WEB_APP_URL;
     state.drive.enabled = true;
     saveState();
