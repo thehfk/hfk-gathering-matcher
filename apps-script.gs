@@ -158,7 +158,8 @@ function unlabelCriterion(label) {
 function appendApplication(app) {
   const sheet = getOrCreateSheet(APPLICATIONS_SHEET, APPLICATION_HEADERS);
   // 같은 신청 ID가 이미 있으면 그 행을 덮어쓰기 (수정 반영)
-  const ids = sheet.getRange(2, 1, Math.max(sheet.getLastRow() - 1, 0), 1).getValues().flat();
+  const lastRow = sheet.getLastRow();
+  const ids = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, 1).getValues().flat() : [];
   const idx = ids.indexOf(app.id);
   const row = applicationRow(app);
   if (idx >= 0) {
@@ -308,7 +309,8 @@ function deleteSessionFromSheet(sessionId) {
 function upsertSession(session) {
   const sheet = getOrCreateSheet(SESSION_SHEET, SESSION_HEADERS);
   const row = sessionRow(session);
-  const ids = sheet.getRange(2, 1, Math.max(sheet.getLastRow() - 1, 0), 1).getValues().flat();
+  const lastRow = sheet.getLastRow();
+  const ids = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, 1).getValues().flat() : [];
   const idx = ids.indexOf(session.id);
   if (idx >= 0) {
     sheet.getRange(idx + 2, 1, 1, row.length).setValues([row]);
